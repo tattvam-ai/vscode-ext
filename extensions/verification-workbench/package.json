@@ -1,0 +1,128 @@
+{
+	"name": "verification-workbench",
+	"displayName": "Verification Workbench",
+	"description": "Custom layout for verification engineers with AI panels and physical design view",
+	"version": "0.0.1",
+	"engines": {
+		"vscode": "^1.105.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"browser": "./out/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "verificationWorkbench.showPhysicalDesign",
+				"title": "Show Physical Design View",
+				"icon": "$(circuit-board)"
+			},
+			{
+				"command": "verificationWorkbench.hidePhysicalDesign",
+				"title": "Hide Physical Design View",
+				"icon": "$(close)"
+			},
+			{
+				"command": "verificationWorkbench.showAIPanel",
+				"title": "Show AI Assistant",
+				"icon": "$(robot)"
+			},
+			{
+				"command": "verificationWorkbench.toggleLayout",
+				"title": "Toggle Verification Layout",
+				"icon": "$(layout)"
+			}
+		],
+		"views": {
+			"verificationAI": [
+				{
+					"id": "aiChatView",
+					"name": "AI Assistant",
+					"when": "verificationWorkbench.aiPanelVisible"
+				},
+				{
+					"id": "aiToolsView",
+					"name": "AI Tools",
+					"when": "verificationWorkbench.aiPanelVisible"
+				}
+			],
+			"verificationPhysical": [
+				{
+					"id": "physicalDesignView",
+					"name": "Physical Design",
+					"when": "verificationWorkbench.physicalViewVisible"
+				},
+				{
+					"id": "physicalToolsView",
+					"name": "Physical Tools",
+					"when": "verificationWorkbench.physicalViewVisible"
+				}
+			]
+		},
+		"viewsContainers": {
+			"panel": {
+				"verificationAI": {
+					"id": "verificationAI",
+					"title": "AI Assistant",
+					"icon": "$(robot)"
+				}
+			},
+			"activitybar": [
+				{
+					"id": "verificationPhysical",
+					"title": "Physical Design",
+					"icon": "$(circuit-board)"
+				}
+			]
+		},
+		"menus": {
+			"view/title": [
+				{
+					"command": "verificationWorkbench.hidePhysicalDesign",
+					"when": "view == physicalDesignView",
+					"group": "navigation"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "verificationWorkbench.showPhysicalDesign"
+				},
+				{
+					"command": "verificationWorkbench.hidePhysicalDesign"
+				},
+				{
+					"command": "verificationWorkbench.showAIPanel"
+				},
+				{
+					"command": "verificationWorkbench.toggleLayout"
+				}
+			]
+		},
+		"keybindings": [
+			{
+				"command": "verificationWorkbench.toggleLayout",
+				"key": "ctrl+shift+v",
+				"mac": "cmd+shift+v"
+			},
+			{
+				"command": "verificationWorkbench.showPhysicalDesign",
+				"key": "ctrl+shift+p",
+				"mac": "cmd+shift+p"
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.74.0",
+		"@types/node": "16.x",
+		"typescript": "^4.9.4"
+	}
+}

@@ -1,5 +1,5 @@
 {
-	"nameShort": "Code - OSS",
+	"nameShort": "Custom VS Code",
 	"nameLong": "Code - OSS",
 	"applicationName": "code-oss",
 	"dataFolderName": ".vscode-oss",
@@ -81,6 +81,11 @@
 				},
 				"publisherDisplayName": "Microsoft"
 			}
+		},
+		{
+			"name": "verification-workbench",
+			"version": "0.0.1",
+			"path": "extensions/verification-workbench"
 		}
 	]
 }
