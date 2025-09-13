@@ -1,0 +1,62 @@
+{
+	"name": "verification-workbench",
+	"displayName": "Verification Workbench",
+	"description": "Simple Chip Assistant for verification assistance",
+	"version": "0.0.1",
+	"engines": {
+		"vscode": "^1.105.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onView:aiTerminalView"
+	],
+	"main": "./out/extension.js",
+	"browser": "./out/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "aiTerminal.show",
+				"title": "Show Chip Assistant",
+				"icon": "$(terminal)"
+			}
+		],
+		"viewsContainers": {
+			"panel": [
+				{
+					"id": "aiTerminalContainer",
+					"title": "Chip Assistant",
+					"icon": "$(terminal)"
+				}
+			]
+		},
+		"views": {
+			"aiTerminalContainer": [
+				{
+					"id": "aiTerminalView",
+					"name": "Chip Assistant",
+					"type": "webview",
+					"when": "true"
+				}
+			]
+		},
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "aiTerminal.show"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.74.0",
+		"@types/node": "16.x",
+		"typescript": "^4.9.4"
+	}
+}
