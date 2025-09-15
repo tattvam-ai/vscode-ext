@@ -16,6 +16,9 @@
 	],
 	"main": "./out/extension.js",
 	"browser": "./out/extension.js",
+	"extensionDependencies": [
+		"mshr-h.veriloghdl"
+	],
 	"contributes": {
 		"commands": [
 			{

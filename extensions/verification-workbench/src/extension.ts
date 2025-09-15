@@ -323,6 +323,41 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 	}
 }
 
+class SelectionIntentCodeLensProvider implements vscode.CodeLensProvider {
+	private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
+	public readonly onDidChangeCodeLenses: vscode.Event<void> = this._onDidChangeCodeLenses.event;
+
+	private _activeSelection: { documentUri: string; range: vscode.Range } | null = null;
+
+	public setActiveSelection(document: vscode.TextDocument, range: vscode.Range) {
+		this._activeSelection = { documentUri: document.uri.toString(), range };
+		this._onDidChangeCodeLenses.fire();
+	}
+
+	public clear() {
+		this._activeSelection = null;
+		this._onDidChangeCodeLenses.fire();
+	}
+
+	provideCodeLenses(document: vscode.TextDocument, _token: vscode.CancellationToken): vscode.CodeLens[] {
+		if (!this._activeSelection || this._activeSelection.documentUri !== document.uri.toString()) {
+			return [];
+		}
+		const line = this._activeSelection.range.start.line;
+		const pos = new vscode.Position(Math.max(0, line), 0);
+		const range = new vscode.Range(pos, pos);
+
+		const items: { title: string; command: string }[] = [
+			{ title: "Explain", command: "chipAssistant.explainSelection" },
+			{ title: "Find Bugs", command: "chipAssistant.findBugsSelection" },
+			{ title: "SV Assertions", command: "chipAssistant.assertionsSelection" },
+			{ title: "Optimize", command: "chipAssistant.optimizeSelection" },
+		];
+
+		return items.map(it => new vscode.CodeLens(range, { title: it.title, command: it.command }));
+	}
+}
+
 // Main extension activation
 export function activate(context: vscode.ExtensionContext) {
 	console.log("Chip Assistant extension is now active!");
@@ -398,6 +433,20 @@ export function activate(context: vscode.ExtensionContext) {
 		svaCmd,
 		optCmd,
 	);
+
+	// Register inline CodeLens for selection intents
+	const lensProvider = new SelectionIntentCodeLensProvider();
+	const lensSelector: vscode.DocumentSelector = [{ scheme: "file" }, { scheme: "untitled" }];
+	const lensRegistration = vscode.languages.registerCodeLensProvider(lensSelector, lensProvider);
+	const selectionListener = vscode.window.onDidChangeTextEditorSelection((e) => {
+		const editor = e.textEditor;
+		if (!editor || e.selections.length === 0 || e.selections[0].isEmpty) {
+			lensProvider.clear();
+			return;
+		}
+		lensProvider.setActiveSelection(editor.document, e.selections[0]);
+	});
+	context.subscriptions.push(lensRegistration, selectionListener);
 }
 
 export function deactivate() { }
