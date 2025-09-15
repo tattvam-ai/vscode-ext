@@ -82,6 +82,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 		this._postMessage({ command: "chat:userEcho", payload: { text: userText } });
+		this._postMessage({ command: "chat:typing", payload: { on: true } });
 
 		try {
 			const config = vscode.workspace.getConfiguration();
@@ -89,6 +90,9 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			const baseUrl = config.get<string>("chipAssistant.openai.baseUrl", "https://api.openai.com/v1");
 			const timeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 60000);
 			const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
+			// Encourage model to format SystemVerilog with proper fenced blocks
+			const formattingHint = "\n\nWhen you include code, use fenced triple backticks with language systemverilog (```systemverilog). Show code first, then concise bullet notes.";
+			const effectiveUser = `${userText}${formattingHint}`;
 
 			if (!apiKey) {
 				this._postMessage({ command: "chat:error", payload: { message: "OpenAI API key not set. Run 'Chip Assistant: Set OpenAI API Key'." } });
@@ -111,7 +115,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 						input: [
 							{
 								role: "user",
-								content: [{ type: "text", text: userText }],
+								content: [{ type: "text", text: effectiveUser }],
 							},
 						],
 					}),
@@ -140,8 +144,8 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 						body: JSON.stringify({
 							model: model === "o3-mini" ? "gpt-4o-mini" : model,
 							messages: [
-								{ role: "system", content: "You are Chip Assistant, a helpful verification assistant for RTL, testbenches, and SystemVerilog." },
-								{ role: "user", content: userText },
+								{ role: "system", content: "You are Chip Assistant, a helpful verification assistant for RTL, testbenches, and SystemVerilog. When you include code, always use fenced triple backticks with language systemverilog (```systemverilog). Show code first, then concise bullet notes." },
+								{ role: "user", content: effectiveUser },
 							],
 							temperature: 0.2,
 						}),
@@ -163,12 +167,21 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			const message = err?.message ?? String(err);
 			this._postMessage({ command: "chat:error", payload: { message } });
 		}
+		finally {
+			this._postMessage({ command: "chat:typing", payload: { on: false } });
+		}
 	}
 
 	private _postMessage(msg: any) {
 		if (this._view) {
 			this._view.webview.postMessage(msg);
 		}
+	}
+
+	public async askWithIntent(intentLabel: string, selectedText: string) {
+		const prompt = `${intentLabel}:\n\n${selectedText}`;
+		await vscode.commands.executeCommand("aiTerminalView.focus");
+		await this._handleChatMessage(prompt);
 	}
 
 	private static _extractTextFromResponses(obj: any): string {
@@ -209,6 +222,12 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		.msg.user { justify-content: flex-end; }
 		.msg.user .bubble { background: var(--vscode-textBlockQuote-background); border: 1px solid var(--vscode-textBlockQuote-border); }
 		.msg.assistant .bubble { background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-panel-border); }
+		/* basic markdown styling */
+		.msg.assistant .bubble h1, .msg.assistant .bubble h2, .msg.assistant .bubble h3 { margin: 6px 0 4px; font-weight: 600; }
+		.msg.assistant .bubble ul { padding-left: 16px; margin: 4px 0; }
+		.msg.assistant .bubble li { margin: 2px 0; }
+		.msg.assistant .bubble code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); padding: 0 3px; border-radius: 3px; }
+		.msg.assistant .bubble pre { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); padding: 8px; border-radius: 6px; overflow-x: auto; }
 		.footer { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--vscode-panel-border); }
 		textarea { flex: 1; resize: none; max-height: 120px; min-height: 38px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 8px; font-family: var(--vscode-font-family); }
 		button { padding: 6px 12px; border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; cursor: pointer; }
@@ -231,10 +250,29 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			row.className = 'msg ' + (role === 'user' ? 'user' : 'assistant');
 			const bubble = document.createElement('div');
 			bubble.className = 'bubble';
-			bubble.textContent = text;
+			bubble.textContent = String(text || '');
 			row.appendChild(bubble);
 			container.appendChild(row);
 			container.scrollTop = container.scrollHeight;
+		}
+
+		let typingEl = null;
+		function setTyping(on) {
+			const container = document.getElementById('chatContainer');
+			if (on) {
+				if (typingEl) return;
+				typingEl = document.createElement('div');
+				typingEl.className = 'msg assistant';
+				const b = document.createElement('div');
+				b.className = 'bubble';
+				b.textContent = 'Thinking…';
+				typingEl.appendChild(b);
+				container.appendChild(typingEl);
+				container.scrollTop = container.scrollHeight;
+			} else if (typingEl) {
+				typingEl.remove();
+				typingEl = null;
+			}
 		}
 
 		function sendPrompt() {
@@ -258,6 +296,10 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					addMessage('assistant', 'Error: ' + (message.payload?.message || 'Unknown error'));
 					break;
 				}
+				case 'chat:typing': {
+					setTyping(Boolean(message.payload?.on));
+					break;
+				}
 				case 'chat:config': {
 					break;
 				}
@@ -268,7 +310,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		});
 
 		document.getElementById('sendBtn').addEventListener('click', sendPrompt);
-		document.getElementById('promptInput').addEventListener('keypress', function(e) {
+		document.getElementById('promptInput').addEventListener('keypress', function (e) {
 			if (e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();
 				sendPrompt();
@@ -276,8 +318,8 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		});
 		vscode.postMessage({ command: 'chat:getConfig' });
 	</script>
-</body>
-</html>`;
+	</body>
+	</html>`;
 	}
 }
 
@@ -317,7 +359,45 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage("Chip Assistant: API key cleared.");
 	});
 
-	context.subscriptions.push(showAITerminal, setKey, clearKey);
+	function registerSelectionIntent(command: string, intentLabel: string) {
+		return vscode.commands.registerCommand(command, async () => {
+			const editor = vscode.window.activeTextEditor;
+			const selection = editor?.selection;
+			if (!editor || !selection || selection.isEmpty) {
+				vscode.window.showInformationMessage("Select some text first.");
+				return;
+			}
+			const selected = editor.document.getText(selection);
+			await aiTerminalProvider.askWithIntent(intentLabel, selected);
+		});
+	}
+
+	const explainCmd = registerSelectionIntent(
+		"chipAssistant.explainSelection",
+		"Explain the following code",
+	);
+	const bugsCmd = registerSelectionIntent(
+		"chipAssistant.findBugsSelection",
+		"Find potential bugs in the following code",
+	);
+	const svaCmd = registerSelectionIntent(
+		"chipAssistant.assertionsSelection",
+		"Generate SystemVerilog assertions for the following code",
+	);
+	const optCmd = registerSelectionIntent(
+		"chipAssistant.optimizeSelection",
+		"Optimize the following code",
+	);
+
+	context.subscriptions.push(
+		showAITerminal,
+		setKey,
+		clearKey,
+		explainCmd,
+		bugsCmd,
+		svaCmd,
+		optCmd,
+	);
 }
 
 export function deactivate() { }

@@ -23,6 +23,10 @@
 				"title": "Show Chip Assistant",
 				"icon": "$(terminal)"
 			},
+			{ "command": "chipAssistant.explainSelection", "title": "Explain Selection" },
+			{ "command": "chipAssistant.findBugsSelection", "title": "Find Bugs in Selection" },
+			{ "command": "chipAssistant.assertionsSelection", "title": "Generate SystemVerilog Assertions" },
+			{ "command": "chipAssistant.optimizeSelection", "title": "Optimize Selection" },
 			{
 				"command": "chipAssistant.setApiKey",
 				"title": "Chip Assistant: Set OpenAI API Key"
@@ -73,9 +77,13 @@
 		},
 		"menus": {
 			"commandPalette": [
-				{
-					"command": "aiTerminal.show"
-				}
+				{ "command": "aiTerminal.show" }
+			],
+			"editor/context": [
+				{ "command": "chipAssistant.explainSelection", "when": "editorHasSelection", "group": "chipAssistant@100" },
+				{ "command": "chipAssistant.findBugsSelection", "when": "editorHasSelection", "group": "chipAssistant@101" },
+				{ "command": "chipAssistant.assertionsSelection", "when": "editorHasSelection", "group": "chipAssistant@102" },
+				{ "command": "chipAssistant.optimizeSelection", "when": "editorHasSelection", "group": "chipAssistant@103" }
 			]
 		}
 	},
