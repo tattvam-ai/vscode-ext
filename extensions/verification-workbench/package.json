@@ -10,7 +10,9 @@
 		"Other"
 	],
 	"activationEvents": [
-		"onView:aiTerminalView"
+		"onView:aiTerminalView",
+		"onCommand:chipAssistant.setApiKey",
+		"onCommand:chipAssistant.clearApiKey"
 	],
 	"main": "./out/extension.js",
 	"browser": "./out/extension.js",
@@ -20,14 +22,22 @@
 				"command": "aiTerminal.show",
 				"title": "Show Chip Assistant",
 				"icon": "$(terminal)"
+			},
+			{
+				"command": "chipAssistant.setApiKey",
+				"title": "Chip Assistant: Set OpenAI API Key"
+			},
+			{
+				"command": "chipAssistant.clearApiKey",
+				"title": "Chip Assistant: Clear OpenAI API Key"
 			}
 		],
 		"viewsContainers": {
-			"panel": [
+			"activitybar": [
 				{
 					"id": "aiTerminalContainer",
 					"title": "Chip Assistant",
-					"icon": "$(terminal)"
+					"icon": "$(circuit-board)"
 				}
 			]
 		},
@@ -40,6 +50,26 @@
 					"when": "true"
 				}
 			]
+		},
+		"configuration": {
+			"title": "Chip Assistant",
+			"properties": {
+				"chipAssistant.openai.model": {
+					"type": "string",
+					"default": "o3-mini",
+					"description": "OpenAI model name (e.g., o3-mini, gpt-4o-mini)"
+				},
+				"chipAssistant.openai.baseUrl": {
+					"type": "string",
+					"default": "https://api.openai.com/v1",
+					"description": "OpenAI API base URL"
+				},
+				"chipAssistant.request.timeoutMs": {
+					"type": "number",
+					"default": 60000,
+					"description": "Request timeout in milliseconds"
+				}
+			}
 		},
 		"menus": {
 			"commandPalette": [
@@ -58,5 +88,8 @@
 		"@types/vscode": "^1.74.0",
 		"@types/node": "16.x",
 		"typescript": "^4.9.4"
+	},
+	"dependencies": {
+		"undici": "^6.19.8"
 	}
 }
