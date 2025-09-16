@@ -90,6 +90,48 @@ export class OpenroadRunner implements vscode.Disposable {
 		vscode.window.showInformationMessage("OpenROAD flow started. Check the output channel for progress.");
 	}
 
+	public async cleanAll(): Promise<void> {
+		if (this.process) {
+			vscode.window.showWarningMessage("OpenROAD flow is running. Stop it before cleaning.");
+			return;
+		}
+		const cfg = vscode.workspace.getConfiguration();
+		const flowHome = cfg.get<string>("openroad.flow.flowHome", "");
+		const designConfig = cfg.get<string>("openroad.flow.designConfig", "");
+		if (!flowHome || !designConfig) {
+			vscode.window.showErrorMessage("OpenROAD flow not configured. Run 'OpenROAD: Configure Flow' first.");
+			return;
+		}
+		const args = ["-C", flowHome, "clean_all", `DESIGN_CONFIG=${designConfig}`];
+		this.outputChannel.clear();
+		this.outputChannel.show();
+		this.outputChannel.appendLine(`Running: make ${args.join(" ")}`);
+		this.outputChannel.appendLine("");
+		this.process = spawn("make", args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } });
+		if (this.process.stdout) {
+			this.process.stdout.on("data", (data: Buffer) => this.outputChannel.append(data.toString()));
+		}
+		if (this.process.stderr) {
+			this.process.stderr.on("data", (data: Buffer) => this.outputChannel.append(data.toString()));
+		}
+		this.process.on("close", (code: number | null) => {
+			this.outputChannel.appendLine("");
+			if (code === 0) {
+				this.outputChannel.appendLine("🧹 Cleaned all flow artifacts.");
+				vscode.window.showInformationMessage("OpenROAD: clean_all completed.");
+			} else {
+				this.outputChannel.appendLine(`❌ clean_all failed with exit code: ${code}`);
+				vscode.window.showErrorMessage(`OpenROAD: clean_all failed with exit code: ${code}`);
+			}
+			this.process = undefined;
+		});
+		this.process.on("error", (error: Error) => {
+			this.outputChannel.appendLine(`❌ Error: ${error.message}`);
+			vscode.window.showErrorMessage(`OpenROAD clean_all error: ${error.message}`);
+			this.process = undefined;
+		});
+	}
+
 	public stopFlow(): void {
 		if (this.process) {
 			this.process.kill("SIGTERM");

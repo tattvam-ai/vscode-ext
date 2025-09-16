@@ -367,6 +367,47 @@ export function activate(context: vscode.ExtensionContext) {
 	// Register the Chip Assistant provider
 	const aiTerminalProvider = new AITerminalProvider(context.extensionUri, context);
 
+	// OpenROAD status bar item (Run/Stop)
+	const openroadStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+	openroadStatusItem.name = "OpenROAD Flow";
+	context.subscriptions.push(openroadStatusItem);
+
+	// OpenROAD actions status bar item (ellipsis opens actions)
+	const openroadActionsItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+	openroadActionsItem.name = "OpenROAD Actions";
+	openroadActionsItem.text = "$(kebab-vertical)";
+	openroadActionsItem.tooltip = "OpenROAD actions (Run/Stop, Clean All, Configure)";
+	openroadActionsItem.command = "openroad.actions";
+	openroadActionsItem.show();
+	context.subscriptions.push(openroadActionsItem);
+
+	function updateOpenroadStatusItem() {
+		const running = OpenroadRunner.getInstance().isRunning();
+		openroadStatusItem.text = running ? "$(debug-stop) OpenROAD Stop" : "$(play) OpenROAD Run";
+		openroadStatusItem.command = running ? "openroad.stopFlow" : "openroad.runFlow";
+		openroadStatusItem.tooltip = running ? "Stop OpenROAD flow (Right-click for actions)" : "Run OpenROAD flow (Right-click for actions)";
+		openroadStatusItem.show();
+	}
+	updateOpenroadStatusItem();
+	const statusTimer = setInterval(updateOpenroadStatusItem, 1000);
+	context.subscriptions.push({ dispose: () => clearInterval(statusTimer) });
+
+	const openroadActions = vscode.commands.registerCommand("openroad.actions", async () => {
+		const running = OpenroadRunner.getInstance().isRunning();
+		const picks: Array<{ label: string; action: () => Promise<void> | void }> = [
+			{ label: running ? "Stop Flow" : "Run Flow", action: async () => running ? vscode.commands.executeCommand("openroad.stopFlow") : vscode.commands.executeCommand("openroad.runFlow") },
+			{ label: "Clean All", action: async () => vscode.commands.executeCommand("openroad.cleanAll") },
+			{ label: "Configure Flow", action: async () => vscode.commands.executeCommand("openroad.configureFlow") },
+		];
+		const choice = await vscode.window.showQuickPick(picks.map(p => p.label), { placeHolder: "OpenROAD actions" });
+		const picked = picks.find(p => p.label === choice);
+		if (picked) {
+			await picked.action();
+			updateOpenroadStatusItem();
+		}
+	});
+	context.subscriptions.push(openroadActions);
+
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(
 			AITerminalProvider.viewType,
@@ -426,12 +467,21 @@ export function activate(context: vscode.ExtensionContext) {
 	const runFlow = vscode.commands.registerCommand("openroad.runFlow", async () => {
 		const runner = OpenroadRunner.getInstance();
 		await runner.runFlow();
+		updateOpenroadStatusItem();
 	});
 
 	// OpenROAD: Stop Flow
 	const stopFlow = vscode.commands.registerCommand("openroad.stopFlow", async () => {
 		const runner = OpenroadRunner.getInstance();
 		runner.stopFlow();
+		updateOpenroadStatusItem();
+	});
+
+	// OpenROAD: Clean All
+	const cleanAll = vscode.commands.registerCommand("openroad.cleanAll", async () => {
+		const runner = OpenroadRunner.getInstance();
+		await runner.cleanAll();
+		updateOpenroadStatusItem();
 	});
 
 	function registerSelectionIntent(command: string, intentLabel: string) {
@@ -472,6 +522,7 @@ export function activate(context: vscode.ExtensionContext) {
 		configureFlow,
 		runFlow,
 		stopFlow,
+		cleanAll,
 		explainCmd,
 		bugsCmd,
 		svaCmd,

@@ -37,7 +37,9 @@
 			{ "command": "openroad.setFlowHome", "title": "OpenROAD: Set FLOW_HOME" },
 			{ "command": "openroad.configureFlow", "title": "OpenROAD: Configure Flow" },
 			{ "command": "openroad.runFlow", "title": "OpenROAD: Run Flow" },
-			{ "command": "openroad.stopFlow", "title": "OpenROAD: Stop Flow" }
+			{ "command": "openroad.stopFlow", "title": "OpenROAD: Stop Flow" },
+			{ "command": "openroad.cleanAll", "title": "OpenROAD: Clean All" },
+			{ "command": "openroad.actions", "title": "OpenROAD: Actions" }
 		],
 		"viewsContainers": {
 			"activitybar": [
@@ -125,7 +127,9 @@
 				{ "command": "openroad.setFlowHome" },
 				{ "command": "openroad.configureFlow" },
 				{ "command": "openroad.runFlow" },
-				{ "command": "openroad.stopFlow" }
+				{ "command": "openroad.stopFlow" },
+				{ "command": "openroad.cleanAll" },
+				{ "command": "openroad.actions" }
 			],
 			"editor/context": [
 				{ "command": "chipAssistant.explainSelection", "when": "editorHasSelection", "group": "chipAssistant@100" },
