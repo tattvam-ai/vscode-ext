@@ -48,6 +48,11 @@
 					"id": "aiTerminalContainer",
 					"title": "Chip Assistant",
 					"icon": "$(circuit-board)"
+				},
+				{
+					"id": "openroadContainer",
+					"title": "OpenROAD",
+					"icon": "$(circuit-board)"
 				}
 			]
 		},
@@ -56,6 +61,14 @@
 				{
 					"id": "aiTerminalView",
 					"name": "Chip Assistant",
+					"type": "webview",
+					"when": "true"
+				}
+			],
+			"openroadContainer": [
+				{
+					"id": "openroadSidebar",
+					"name": "OpenROAD",
 					"type": "webview",
 					"when": "true"
 				}

@@ -33,6 +33,7 @@ import * as vscode from "vscode";
 import { fetch } from "undici";
 import { OpenroadConfigPanel } from "./openroadConfigPanel";
 import { OpenroadRunner } from "./openroadRunner";
+import { OpenroadSidebar } from "./openroadSidebar";
 
 // Simple Chip Assistant Provider
 class AITerminalProvider implements vscode.WebviewViewProvider {
@@ -420,6 +421,14 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.registerWebviewViewProvider(
 			AITerminalProvider.viewType,
 			aiTerminalProvider,
+		),
+	);
+
+	const openroadSidebarProvider = new OpenroadSidebar(context.extensionUri);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(
+			OpenroadSidebar.viewType,
+			openroadSidebarProvider,
 		),
 	);
 
