@@ -34,6 +34,7 @@ import { fetch } from "undici";
 import { OpenroadConfigPanel } from "./openroadConfigPanel";
 import { OpenroadRunner } from "./openroadRunner";
 import { OpenroadSidebar } from "./openroadSidebar";
+// import { OpenroadResultsSidebar } from "./openroadResultsSidebar";
 
 // Simple Chip Assistant Provider
 class AITerminalProvider implements vscode.WebviewViewProvider {
@@ -432,6 +433,15 @@ export function activate(context: vscode.ExtensionContext) {
 		),
 	);
 
+	// Results sidebar removed
+	// const resultsSidebarProvider = new OpenroadResultsSidebar(context.extensionUri);
+	// context.subscriptions.push(
+	// 	vscode.window.registerWebviewViewProvider(
+	// 		OpenroadResultsSidebar.viewType,
+	// 		resultsSidebarProvider,
+	// 	),
+	// );
+
 	// Simple command to show the Chip Assistant
 	const showAITerminal = vscode.commands.registerCommand(
 		"aiTerminal.show",
@@ -530,6 +540,11 @@ export function activate(context: vscode.ExtensionContext) {
 		"chipAssistant.optimizeSelection",
 		"Optimize the following code",
 	);
+
+	// OpenROAD: Show Results Panel
+	// const showResults = vscode.commands.registerCommand("openroad.showResults", async () => {
+	// 	await OpenroadResultsPanel.show(context);
+	// });
 
 	context.subscriptions.push(
 		showAITerminal,
