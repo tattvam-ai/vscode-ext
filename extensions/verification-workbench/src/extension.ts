@@ -31,6 +31,7 @@
 
 import * as vscode from "vscode";
 import { fetch } from "undici";
+import { OpenroadConfigPanel } from "./openroadConfigPanel";
 
 // Simple Chip Assistant Provider
 class AITerminalProvider implements vscode.WebviewViewProvider {
@@ -394,6 +395,32 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage("Chip Assistant: API key cleared.");
 	});
 
+	// OpenROAD: Set FLOW_HOME
+	const setFlowHome = vscode.commands.registerCommand("openroad.setFlowHome", async () => {
+		const picked = await vscode.window.showOpenDialog({
+			canSelectMany: false,
+			canSelectFiles: false,
+			canSelectFolders: true,
+			title: "Select OpenROAD-flow-scripts root (FLOW_HOME)",
+			openLabel: "Use as FLOW_HOME",
+		});
+		if (!picked || picked.length === 0) {
+			return;
+		}
+		const flowHome = picked[0].fsPath;
+		await vscode.workspace.getConfiguration().update(
+			"openroad.flow.flowHome",
+			flowHome,
+			vscode.ConfigurationTarget.Workspace
+		);
+		vscode.window.showInformationMessage(`OpenROAD FLOW_HOME set to: ${flowHome}`);
+	});
+
+	// OpenROAD: Configure Flow (wizard)
+	const configureFlow = vscode.commands.registerCommand("openroad.configureFlow", async () => {
+		await OpenroadConfigPanel.createOrShow(context);
+	});
+
 	function registerSelectionIntent(command: string, intentLabel: string) {
 		return vscode.commands.registerCommand(command, async () => {
 			const editor = vscode.window.activeTextEditor;
@@ -428,6 +455,8 @@ export function activate(context: vscode.ExtensionContext) {
 		showAITerminal,
 		setKey,
 		clearKey,
+		setFlowHome,
+		configureFlow,
 		explainCmd,
 		bugsCmd,
 		svaCmd,

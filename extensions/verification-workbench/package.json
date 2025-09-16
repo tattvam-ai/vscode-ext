@@ -9,11 +9,7 @@
 	"categories": [
 		"Other"
 	],
-	"activationEvents": [
-		"onView:aiTerminalView",
-		"onCommand:chipAssistant.setApiKey",
-		"onCommand:chipAssistant.clearApiKey"
-	],
+	"activationEvents": [],
 	"main": "./out/extension.js",
 	"browser": "./out/extension.js",
 	"extensionDependencies": [
@@ -37,7 +33,9 @@
 			{
 				"command": "chipAssistant.clearApiKey",
 				"title": "Chip Assistant: Clear OpenAI API Key"
-			}
+			},
+			{ "command": "openroad.setFlowHome", "title": "OpenROAD: Set FLOW_HOME" },
+			{ "command": "openroad.configureFlow", "title": "OpenROAD: Configure Flow" }
 		],
 		"viewsContainers": {
 			"activitybar": [
@@ -75,12 +73,45 @@
 					"type": "number",
 					"default": 60000,
 					"description": "Request timeout in milliseconds"
+				},
+				"openroad.flow.flowHome": {
+					"type": "string",
+					"default": "",
+					"description": "Path to OpenROAD-flow-scripts root (FLOW_HOME)"
+				},
+				"openroad.flow.designConfig": {
+					"type": "string",
+					"default": "",
+					"description": "Absolute path to DESIGN_CONFIG (config.mk)"
+				},
+				"openroad.flow.platform": {
+					"type": "string",
+					"default": "",
+					"description": "Platform name (e.g., sky130hd, sky130hs, asap7)"
+				},
+				"openroad.flow.target": {
+					"type": "string",
+					"default": "finish",
+					"description": "Make target to run (finish, synth, floorplan, route, gui_final, etc.)"
+				},
+				"openroad.flow.resultsRoot": {
+					"type": "string",
+					"default": "",
+					"description": "Optional results root (overrides autodetect under FLOW_HOME/runs)"
+				},
+				"openroad.flow.envPreset": {
+					"type": "string",
+					"default": "none",
+					"enum": ["none", "docker", "conda"],
+					"description": "Optional environment preset for running the flow"
 				}
 			}
 		},
 		"menus": {
 			"commandPalette": [
-				{ "command": "aiTerminal.show" }
+				{ "command": "aiTerminal.show" },
+				{ "command": "openroad.setFlowHome" },
+				{ "command": "openroad.configureFlow" }
 			],
 			"editor/context": [
 				{ "command": "chipAssistant.explainSelection", "when": "editorHasSelection", "group": "chipAssistant@100" },
