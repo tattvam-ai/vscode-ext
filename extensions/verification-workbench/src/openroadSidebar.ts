@@ -101,7 +101,7 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 		this._view.webview.postMessage({ type: "results", data });
 	}
 
-	private async collectResults(): Promise<{ runDir: string | null; results: string[]; reports: string[] }> {
+	private async collectResults(): Promise<{ runDir: string | null; results: string[]; reports: string[]; logs: string[] }> {
 		const cfg = vscode.workspace.getConfiguration();
 		const flowHome = cfg.get<string>("openroad.flow.flowHome", "");
 		const resultsRootOverride = cfg.get<string>("openroad.flow.resultsRoot", "");
@@ -109,15 +109,17 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 		const designName = cfg.get<string>("openroad.flow.designName", "");
 		const flowVariant = cfg.get<string>("openroad.flow.flowVariant", "base");
 		if (!flowHome || !platform || !designName) {
-			return { runDir: null, results: [], reports: [] };
+			return { runDir: null, results: [], reports: [], logs: [] };
 		}
 		const candidateRoot = resultsRootOverride && resultsRootOverride.trim() ? resultsRootOverride : path.join(flowHome, "results", platform, designName, flowVariant);
 		const runDir = await this.findLatestDirectory(candidateRoot);
-		if (!runDir) return { runDir: null, results: [], reports: [] };
+		if (!runDir) return { runDir: null, results: [], reports: [], logs: [] };
 		const reportsDir = runDir.replace(path.sep + "results" + path.sep, path.sep + "reports" + path.sep);
+		const logsDir = runDir.replace(path.sep + "results" + path.sep, path.sep + "logs" + path.sep);
 		const results = await this.listFiles(runDir, [".gds", ".def", ".lef", ".spef", ".sdc", ".json", ".rpt"]);
 		const reports = (await this.pathExists(reportsDir)) ? await this.listFiles(reportsDir, [".rpt", ".txt", ".report"]) : [];
-		return { runDir, results, reports };
+		const logs = (await this.pathExists(logsDir)) ? await this.listFiles(logsDir, [".log", ".txt"]) : [];
+		return { runDir, results, reports, logs };
 	}
 
 	private async findLatestDirectory(root: string): Promise<string | null> {
@@ -240,6 +242,10 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 			<summary><strong>Reports</strong></summary>
 			<ul id="reportsList"></ul>
 		</details>
+		<details>
+			<summary><strong>Logs</strong></summary>
+			<ul id="logsList"></ul>
+		</details>
 	</div>
 
 	<script>
@@ -279,9 +285,10 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 				document.getElementById('tns').textContent = d.found && d.timing && typeof d.timing.tns !== 'undefined' ? String(d.timing.tns) : '-';
 			}
 			if (m.type === 'results') {
-				const d = m.data || { results: [], reports: [] };
+				const d = m.data || { results: [], reports: [], logs: [] };
 				renderList('resultsList', d.results || []);
 				renderList('reportsList', d.reports || []);
+				renderList('logsList', d.logs || []);
 			}
 		});
 	</script>
