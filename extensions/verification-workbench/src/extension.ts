@@ -32,6 +32,7 @@
 import * as vscode from "vscode";
 import { fetch } from "undici";
 import { OpenroadConfigPanel } from "./openroadConfigPanel";
+import { OpenroadRunner } from "./openroadRunner";
 
 // Simple Chip Assistant Provider
 class AITerminalProvider implements vscode.WebviewViewProvider {
@@ -421,6 +422,18 @@ export function activate(context: vscode.ExtensionContext) {
 		await OpenroadConfigPanel.createOrShow(context);
 	});
 
+	// OpenROAD: Run Flow
+	const runFlow = vscode.commands.registerCommand("openroad.runFlow", async () => {
+		const runner = OpenroadRunner.getInstance();
+		await runner.runFlow();
+	});
+
+	// OpenROAD: Stop Flow
+	const stopFlow = vscode.commands.registerCommand("openroad.stopFlow", async () => {
+		const runner = OpenroadRunner.getInstance();
+		runner.stopFlow();
+	});
+
 	function registerSelectionIntent(command: string, intentLabel: string) {
 		return vscode.commands.registerCommand(command, async () => {
 			const editor = vscode.window.activeTextEditor;
@@ -457,6 +470,8 @@ export function activate(context: vscode.ExtensionContext) {
 		clearKey,
 		setFlowHome,
 		configureFlow,
+		runFlow,
+		stopFlow,
 		explainCmd,
 		bugsCmd,
 		svaCmd,

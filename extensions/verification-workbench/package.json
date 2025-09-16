@@ -35,7 +35,9 @@
 				"title": "Chip Assistant: Clear OpenAI API Key"
 			},
 			{ "command": "openroad.setFlowHome", "title": "OpenROAD: Set FLOW_HOME" },
-			{ "command": "openroad.configureFlow", "title": "OpenROAD: Configure Flow" }
+			{ "command": "openroad.configureFlow", "title": "OpenROAD: Configure Flow" },
+			{ "command": "openroad.runFlow", "title": "OpenROAD: Run Flow" },
+			{ "command": "openroad.stopFlow", "title": "OpenROAD: Stop Flow" }
 		],
 		"viewsContainers": {
 			"activitybar": [
@@ -121,7 +123,9 @@
 			"commandPalette": [
 				{ "command": "aiTerminal.show" },
 				{ "command": "openroad.setFlowHome" },
-				{ "command": "openroad.configureFlow" }
+				{ "command": "openroad.configureFlow" },
+				{ "command": "openroad.runFlow" },
+				{ "command": "openroad.stopFlow" }
 			],
 			"editor/context": [
 				{ "command": "chipAssistant.explainSelection", "when": "editorHasSelection", "group": "chipAssistant@100" },
