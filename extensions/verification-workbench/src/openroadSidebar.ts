@@ -101,7 +101,7 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 		this._view.webview.postMessage({ type: "results", data });
 	}
 
-	private async collectResults(): Promise<{ runDir: string | null; results: string[]; reports: string[]; logs: string[] }> {
+	private async collectResults(): Promise<{ runDir: string | null; results: string[]; reports: string[]; logs: string[]; images: string[] }> {
 		const cfg = vscode.workspace.getConfiguration();
 		const flowHome = cfg.get<string>("openroad.flow.flowHome", "");
 		const resultsRootOverride = cfg.get<string>("openroad.flow.resultsRoot", "");
@@ -109,17 +109,25 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 		const designName = cfg.get<string>("openroad.flow.designName", "");
 		const flowVariant = cfg.get<string>("openroad.flow.flowVariant", "base");
 		if (!flowHome || !platform || !designName) {
-			return { runDir: null, results: [], reports: [], logs: [] };
+			return { runDir: null, results: [], reports: [], logs: [], images: [] };
 		}
 		const candidateRoot = resultsRootOverride && resultsRootOverride.trim() ? resultsRootOverride : path.join(flowHome, "results", platform, designName, flowVariant);
 		const runDir = await this.findLatestDirectory(candidateRoot);
-		if (!runDir) return { runDir: null, results: [], reports: [], logs: [] };
+		if (!runDir) return { runDir: null, results: [], reports: [], logs: [], images: [] };
 		const reportsDir = runDir.replace(path.sep + "results" + path.sep, path.sep + "reports" + path.sep);
 		const logsDir = runDir.replace(path.sep + "results" + path.sep, path.sep + "logs" + path.sep);
 		const results = await this.listFiles(runDir, [".gds", ".def", ".lef", ".spef", ".sdc", ".json", ".rpt"]);
 		const reports = (await this.pathExists(reportsDir)) ? await this.listFiles(reportsDir, [".rpt", ".txt", ".report"]) : [];
 		const logs = (await this.pathExists(logsDir)) ? await this.listFiles(logsDir, [".log", ".txt"]) : [];
-		return { runDir, results, reports, logs };
+		const imageExts = [".webp", ".png"];
+		const imagesSet = new Set<string>();
+		for (const dir of [runDir, reportsDir, logsDir]) {
+			if (!dir) continue;
+			const imgs = await this.listFiles(dir, imageExts);
+			imgs.forEach(i => imagesSet.add(i));
+		}
+		const images = Array.from(imagesSet).sort();
+		return { runDir, results, reports, logs, images };
 	}
 
 	private async findLatestDirectory(root: string): Promise<string | null> {
@@ -189,6 +197,7 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 			}
 			const res: any = {};
 			if (wnsMatch) res.wns = Number(wnsMatch[1]);
+			if (tnsMatch) res.tns = Number(wnsMatch ? null : (tnsMatch[1])); // preserve earlier logic
 			if (tnsMatch) res.tns = Number(tnsMatch[1]);
 			return Object.keys(res).length ? res : null;
 		} catch {
@@ -203,25 +212,27 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 	<meta charset="UTF-8" />
 	<style>
 		body{font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-sideBar-background); margin:0; padding:8px}
-		button{padding:6px 8px}
+		button{padding:4px 8px}
 		.section{margin-top:12px; font-weight:600}
 		.small{opacity:0.8; font-size:12px}
 		.kv{display:grid; grid-template-columns: 110px 1fr; gap:6px; font-size:12px}
 		.code{font-family: var(--vscode-editor-font-family); font-size:11px; opacity:0.8}
 		.details{margin-top:8px}
-		.btn-block{width:100%; margin:4px 0}
+		.toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px}
 		.btn-mini{padding:2px 6px; font-size:11px; margin-left:6px}
-		.file-row{display:flex; align-items:center; justify-content:space-between; gap:6px}
+		.file-row{display:flex; align-items:center; justify-content:space-between; gap:6px; padding:2px 0}
 		.file-row code{flex:1; overflow:hidden; text-overflow:ellipsis}
 	</style>
 </head>
 <body>
 	<div class="section">Actions</div>
-	<button id="run" class="btn-block">Run Flow</button>
-	<button id="stop" class="btn-block">Stop Flow</button>
-	<button id="clean" class="btn-block">Clean All</button>
-	<button id="gui" class="btn-block">Show GUI (gui_final)</button>
-	<button id="cfg" class="btn-block">Configure Flow</button>
+	<div class="toolbar">
+		<button id="run">Run</button>
+		<button id="stop">Stop</button>
+		<button id="clean">Clean</button>
+		<button id="gui">GUI</button>
+		<button id="cfg">Configure</button>
+	</div>
 
 	<div class="section">Status</div>
 	<div id="status" class="small">Idle</div>
@@ -245,6 +256,10 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 		<details>
 			<summary><strong>Logs</strong></summary>
 			<ul id="logsList"></ul>
+		</details>
+		<details>
+			<summary><strong>Images</strong></summary>
+			<ul id="imagesList"></ul>
 		</details>
 	</div>
 
@@ -285,10 +300,11 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 				document.getElementById('tns').textContent = d.found && d.timing && typeof d.timing.tns !== 'undefined' ? String(d.timing.tns) : '-';
 			}
 			if (m.type === 'results') {
-				const d = m.data || { results: [], reports: [], logs: [] };
+				const d = m.data || { results: [], reports: [], logs: [], images: [] };
 				renderList('resultsList', d.results || []);
 				renderList('reportsList', d.reports || []);
 				renderList('logsList', d.logs || []);
+				renderList('imagesList', d.images || []);
 			}
 		});
 	</script>
