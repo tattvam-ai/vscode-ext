@@ -392,11 +392,19 @@ export function activate(context: vscode.ExtensionContext) {
 	const statusTimer = setInterval(updateOpenroadStatusItem, 1000);
 	context.subscriptions.push({ dispose: () => clearInterval(statusTimer) });
 
+	// OpenROAD: Show GUI (gui_final)
+	const guiFinal = vscode.commands.registerCommand("openroad.guiFinal", async () => {
+		const runner = OpenroadRunner.getInstance();
+		await runner.guiFinal();
+		updateOpenroadStatusItem();
+	});
+
 	const openroadActions = vscode.commands.registerCommand("openroad.actions", async () => {
 		const running = OpenroadRunner.getInstance().isRunning();
 		const picks: Array<{ label: string; action: () => Promise<void> | void }> = [
 			{ label: running ? "Stop Flow" : "Run Flow", action: async () => running ? vscode.commands.executeCommand("openroad.stopFlow") : vscode.commands.executeCommand("openroad.runFlow") },
 			{ label: "Clean All", action: async () => vscode.commands.executeCommand("openroad.cleanAll") },
+			{ label: "Show GUI (gui_final)", action: async () => vscode.commands.executeCommand("openroad.guiFinal") },
 			{ label: "Configure Flow", action: async () => vscode.commands.executeCommand("openroad.configureFlow") },
 		];
 		const choice = await vscode.window.showQuickPick(picks.map(p => p.label), { placeHolder: "OpenROAD actions" });
@@ -523,6 +531,7 @@ export function activate(context: vscode.ExtensionContext) {
 		runFlow,
 		stopFlow,
 		cleanAll,
+		guiFinal,
 		explainCmd,
 		bugsCmd,
 		svaCmd,

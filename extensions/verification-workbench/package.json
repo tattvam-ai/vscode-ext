@@ -39,7 +39,8 @@
 			{ "command": "openroad.runFlow", "title": "OpenROAD: Run Flow" },
 			{ "command": "openroad.stopFlow", "title": "OpenROAD: Stop Flow" },
 			{ "command": "openroad.cleanAll", "title": "OpenROAD: Clean All" },
-			{ "command": "openroad.actions", "title": "OpenROAD: Actions" }
+			{ "command": "openroad.actions", "title": "OpenROAD: Actions" },
+			{ "command": "openroad.guiFinal", "title": "OpenROAD: Show GUI (gui_final)" }
 		],
 		"viewsContainers": {
 			"activitybar": [
@@ -129,7 +130,8 @@
 				{ "command": "openroad.runFlow" },
 				{ "command": "openroad.stopFlow" },
 				{ "command": "openroad.cleanAll" },
-				{ "command": "openroad.actions" }
+				{ "command": "openroad.actions" },
+				{ "command": "openroad.guiFinal" }
 			],
 			"editor/context": [
 				{ "command": "chipAssistant.explainSelection", "when": "editorHasSelection", "group": "chipAssistant@100" },
