@@ -89,10 +89,20 @@
 					"default": "",
 					"description": "Platform name (e.g., sky130hd, sky130hs, asap7)"
 				},
+				"openroad.flow.flowVariant": {
+					"type": "string",
+					"default": "base",
+					"description": "Flow variant (e.g., base, hs, hd)"
+				},
+				"openroad.flow.designName": {
+					"type": "string",
+					"default": "",
+					"description": "Design name (auto-deduced from config.mk path if empty)"
+				},
 				"openroad.flow.target": {
 					"type": "string",
-					"default": "finish",
-					"description": "Make target to run (finish, synth, floorplan, route, gui_final, etc.)"
+					"default": "",
+					"description": "Optional make target (e.g., finish, floorplan). Leave empty to run default."
 				},
 				"openroad.flow.resultsRoot": {
 					"type": "string",
