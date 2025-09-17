@@ -98,6 +98,12 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			const formattingHint = "\n\nWhen you include code, use fenced triple backticks with language systemverilog (```systemverilog). Show code first, then concise bullet notes.";
 			const effectiveUser = `${userText}${formattingHint}`;
 
+			// Optionally show the effective prompt being sent
+			const showPrompt = config.get<boolean>("chipAssistant.showEffectivePrompt", true);
+			if (showPrompt) {
+				this._postMessage({ command: "chat:assistant", payload: { text: `Effective prompt:\n\n${effectiveUser}` } });
+			}
+
 			if (!apiKey) {
 				this._postMessage({ command: "chat:error", payload: { message: "OpenAI API key not set. Run 'Chip Assistant: Set OpenAI API Key'." } });
 				return;

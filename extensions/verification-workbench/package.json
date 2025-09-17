@@ -92,6 +92,11 @@
 					"default": 60000,
 					"description": "Request timeout in milliseconds"
 				},
+				"chipAssistant.showEffectivePrompt": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show the exact prompt sent to the model in the Chip Assistant view"
+				},
 				"openroad.flow.flowHome": {
 					"type": "string",
 					"default": "",
