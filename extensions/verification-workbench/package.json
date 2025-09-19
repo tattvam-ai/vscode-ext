@@ -50,6 +50,7 @@
 			{ "command": "cocotb.checkPrerequisites", "title": "Cocotb: Check Prerequisites" },
 			{ "command": "cocotb.installCocotb", "title": "Cocotb: Install Cocotb" },
 			{ "command": "cocotb.installSimulator", "title": "Cocotb: Install Simulator" },
+			{ "command": "cocotb.installGtkwave", "title": "Cocotb: Install GTKWave" },
 			{ "command": "cocotb.debugSimulatorDetection", "title": "Cocotb: Debug Simulator Detection" },
 			{ "command": "cocotb.generateTestbench", "title": "Cocotb: Generate Testbench" }
 		],
@@ -208,6 +209,7 @@
 				{ "command": "cocotb.checkPrerequisites" },
 				{ "command": "cocotb.installCocotb" },
 				{ "command": "cocotb.installSimulator" },
+				{ "command": "cocotb.installGtkwave" },
 				{ "command": "cocotb.debugSimulatorDetection" },
 				{ "command": "cocotb.generateTestbench" }
 			],

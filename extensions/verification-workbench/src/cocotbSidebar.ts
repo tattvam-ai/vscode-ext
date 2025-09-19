@@ -7,11 +7,18 @@ import { CocotbRunner } from "./cocotbRunner";
 
 export class CocotbSidebar implements vscode.WebviewViewProvider {
 	public static readonly viewType = "cocotbSidebar";
+	private static _instance: CocotbSidebar | undefined;
+
 	private _view?: vscode.WebviewView;
 	private _runner: CocotbRunner;
 
 	constructor(private readonly _extensionUri: vscode.Uri) {
 		this._runner = CocotbRunner.getInstance();
+		CocotbSidebar._instance = this;
+	}
+
+	public static getInstance(): CocotbSidebar | undefined {
+		return CocotbSidebar._instance;
 	}
 
 	public resolveWebviewView(
@@ -71,6 +78,11 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 						await vscode.commands.executeCommand("cocotb.generateMakefile");
 						break;
 					}
+					case "installGtkwave": {
+						const success = await this._runner.installGtkwave();
+						this._postMessage({ command: "installResult", payload: { component: "gtkwave", success } });
+						break;
+					}
 				}
 			},
 			undefined,
@@ -97,6 +109,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		if (this._view) {
 			this._view.webview.postMessage(msg);
 		}
+	}
+
+	public postStatus(status: 'running' | 'stopped' | 'cleaned') {
+		this._postMessage({ command: 'status', payload: status });
 	}
 
 	private _getHtmlForWebview(webview: vscode.Webview): string {
@@ -166,6 +182,11 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			border: 1px solid rgba(255, 255, 255, 0.3);
 			color: var(--vscode-foreground);
 		}
+		.status.cleaned {
+			background: linear-gradient(135deg, rgba(64, 255, 64, 0.2) 0%, rgba(0, 204, 102, 0.2) 100%);
+			border: 1px solid #40ff40;
+			color: #40ff40;
+		}
 		.prerequisites {
 			margin: 8px 0;
 			font-size: 12px;
@@ -187,20 +208,17 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			color: #40ff40;
 		}
 
-		.path-input {
-			display: flex;
-			gap: 5px;
-			margin-bottom: 10px;
-		}
-
-		.path-input input {
-			flex: 1;
-			padding: 6px 10px;
+		.path-display {
+			margin-top: 8px;
+			padding: 8px 10px;
 			background: #1e2a1e;
 			border: 1px solid #40ff40;
 			border-radius: 4px;
 			color: #ffffff;
 			font-size: 12px;
+			font-family: 'Courier New', monospace;
+			word-break: break-all;
+			border-left: 3px solid #40ff40;
 		}
 
 		.button.small {
@@ -238,19 +256,17 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 	<div class="header">Cocotb Test Manager</div>
 
 	<div class="section">
-		<div class="section-title">Configuration</div>
+		<div class="section-title">Test Directory</div>
 		<div class="config-item">
-			<label for="testDirPath">Test Directory:</label>
-			<div class="path-input">
-				<input type="text" id="testDirPath" placeholder="Auto-detected or click Browse..." readonly>
-				<button id="browseBtn" class="button small">📁 Browse</button>
-			</div>
+			<label>Test Directory:</label>
+			<button id="browseBtn" class="button">📁 Browse</button>
+			<div id="testDirPath" class="path-display">Auto-detected or click Browse...</div>
 		</div>
 		<button id="generateMakefileBtn" class="button">📄 Generate Makefile</button>
 	</div>
 
 	<div class="section">
-		<div class="section-title">Setup & Testing</div>
+		<div class="section-title">Setup</div>
 		<button id="checkBtn" class="button">🔍 Check Prerequisites</button>
 		<div id="prerequisites" class="prerequisites" style="display: none;">
 			<div class="prerequisite">
@@ -267,12 +283,24 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 				<span id="simulator-status">Unknown</span>
 				<button id="installSimulatorBtn" class="button" style="width: auto; margin-left: 8px; padding: 4px 8px; font-size: 11px;">Install</button>
 			</div>
+			<div class="prerequisite">
+				<span>GTKWave:</span>
+				<span id="gtkwave-status">Unknown</span>
+				<button id="installGtkwaveBtn" class="button" style="width: auto; margin-left: 8px; padding: 4px 8px; font-size: 11px;">Install</button>
+			</div>
 		</div>
+	</div>
 
-		<div id="status" class="status stopped">Tests stopped</div>
+	<div class="section">
+		<div class="section-title">Testing</div>
 		<button id="runBtn" class="button">▶️ Run Tests</button>
 		<button id="stopBtn" class="button" disabled>⏹️ Stop Tests</button>
 		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
+	</div>
+
+	<div class="section">
+		<div class="section-title">Status</div>
+		<div id="status" class="status stopped">Tests stopped</div>
 	</div>
 
 	<script>
@@ -280,22 +308,44 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 
 		let isRunning = false;
 
-		function updateStatus(running) {
-			isRunning = running;
+		function updateStatus(status) {
 			const statusEl = document.getElementById('status');
 			const runBtn = document.getElementById('runBtn');
 			const stopBtn = document.getElementById('stopBtn');
 
-			if (running) {
-				statusEl.textContent = 'Tests running...';
-				statusEl.className = 'status running';
-				runBtn.disabled = true;
-				stopBtn.disabled = false;
-			} else {
-				statusEl.textContent = 'Tests stopped';
-				statusEl.className = 'status stopped';
-				runBtn.disabled = false;
-				stopBtn.disabled = true;
+			switch (status) {
+				case 'running':
+					isRunning = true;
+					statusEl.textContent = 'Tests running...';
+					statusEl.className = 'status running';
+					runBtn.disabled = true;
+					stopBtn.disabled = false;
+					break;
+				case 'stopped':
+					isRunning = false;
+					statusEl.textContent = 'Tests stopped';
+					statusEl.className = 'status stopped';
+					runBtn.disabled = false;
+					stopBtn.disabled = true;
+					break;
+				case 'cleaned':
+					isRunning = false;
+					statusEl.textContent = 'Tests cleaned';
+					statusEl.className = 'status cleaned';
+					runBtn.disabled = false;
+					stopBtn.disabled = true;
+					// Auto-revert to stopped after 3 seconds
+					setTimeout(() => {
+						updateStatus('stopped');
+					}, 3000);
+					break;
+				default:
+					// Handle legacy boolean input for backward compatibility
+					if (status === true) {
+						updateStatus('running');
+					} else if (status === false) {
+						updateStatus('stopped');
+					}
 			}
 		}
 
@@ -309,6 +359,9 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 
 			document.getElementById('simulator-status').textContent = results.simulator ? '✓ OK' : '✗ Missing';
 			document.getElementById('simulator-status').className = results.simulator ? 'prerequisite ok' : 'prerequisite error';
+
+			document.getElementById('gtkwave-status').textContent = results.gtkwave ? '✓ OK' : '✗ Missing';
+			document.getElementById('gtkwave-status').className = results.gtkwave ? 'prerequisite ok' : 'prerequisite error';
 
 			prereqEl.style.display = 'block';
 		}
@@ -349,11 +402,15 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			vscode.postMessage({ command: 'installSimulator' });
 		});
 
+		document.getElementById('installGtkwaveBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'installGtkwave' });
+		});
+
 
 		// Update test directory display
 		function updateTestDirectory(testDir) {
-			const testDirInput = document.getElementById('testDirPath');
-			testDirInput.value = testDir || 'Auto-detected or click Browse...';
+			const testDirDisplay = document.getElementById('testDirPath');
+			testDirDisplay.textContent = testDir || 'Auto-detected or click Browse...';
 		}
 
 		// Initialize test directory display
@@ -364,7 +421,12 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			const message = event.data;
 			switch (message.command) {
 				case 'status':
-					updateStatus(message.payload.running);
+					// Handle both legacy format (boolean) and new format (string)
+					if (typeof message.payload === 'string') {
+						updateStatus(message.payload);
+					} else if (message.payload.running !== undefined) {
+						updateStatus(message.payload.running ? 'running' : 'stopped');
+					}
 					break;
 				case 'prerequisites':
 					updatePrerequisites(message.payload);

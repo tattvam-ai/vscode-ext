@@ -259,6 +259,13 @@ export class CocotbRunner implements vscode.Disposable {
 			if (code === 0) {
 				this.outputChannel.appendLine("🧹 Cleaned cocotb test artifacts.");
 				vscode.window.showInformationMessage("Cocotb: clean completed.");
+
+				// Notify sidebar of cleaned status
+				const { CocotbSidebar } = require('./cocotbSidebar');
+				const sidebar = CocotbSidebar.getInstance();
+				if (sidebar) {
+					sidebar.postStatus('cleaned');
+				}
 			} else {
 				this.outputChannel.appendLine(`❌ clean failed with exit code: ${code}`);
 				vscode.window.showErrorMessage(`Cocotb: clean failed with exit code: ${code}`);
@@ -301,8 +308,8 @@ PYTHONPATH = .
 		vscode.window.showInformationMessage(`Generated Makefile at: ${makefilePath}`);
 	}
 
-	public async checkPrerequisites(): Promise<{ cocotb: boolean; simulator: boolean; python: boolean }> {
-		const results = { cocotb: false, simulator: false, python: false };
+	public async checkPrerequisites(): Promise<{ cocotb: boolean; simulator: boolean; python: boolean; gtkwave: boolean }> {
+		const results = { cocotb: false, simulator: false, python: false, gtkwave: false };
 
 		// Debug: Show environment info
 		this.outputChannel.appendLine("🔍 Environment Debug Info:");
@@ -412,6 +419,23 @@ PYTHONPATH = .
 		} catch (err: any) {
 			this.outputChannel.appendLine(`❌ Simulator check exception: ${err.message}`);
 			results.simulator = false;
+		}
+
+		// Check GTKWave
+		try {
+			this.outputChannel.appendLine(`\nChecking GTKWave...`);
+			const gtkwaveResult = await this.runCommand("gtkwave", ["--version"]);
+
+			if (gtkwaveResult.success) {
+				this.outputChannel.appendLine(`✅ GTKWave detected: ${gtkwaveResult.output.split('\n')[0]}`);
+				results.gtkwave = true;
+			} else {
+				this.outputChannel.appendLine(`❌ GTKWave not found`);
+				results.gtkwave = false;
+			}
+		} catch (err: any) {
+			this.outputChannel.appendLine(`❌ GTKWave check exception: ${err.message}`);
+			results.gtkwave = false;
 		}
 
 		return results;
@@ -829,6 +853,130 @@ PYTHONPATH = .
 		}
 	}
 
+	public async installGtkwave(): Promise<boolean> {
+		this.outputChannel.clear();
+		this.outputChannel.show();
+		this.outputChannel.appendLine(`Setting up GTKWave...`);
+
+		try {
+			// First, try to find existing GTKWave installation
+			const existingInstallation = await this.runCommand("gtkwave", ["--version"]);
+
+			if (existingInstallation.success) {
+				this.outputChannel.appendLine(`✅ Found existing GTKWave installation`);
+				vscode.window.showInformationMessage(`GTKWave is already installed!`);
+				return true;
+			}
+
+			// If no existing installation found, proceed with installation
+			this.outputChannel.appendLine("❌ No existing installation found");
+			this.outputChannel.appendLine("Proceeding with installation...");
+
+			let installCommand: string[];
+			let installMessage: string;
+			let requiresSudo = false;
+
+			// Detect OS and provide appropriate command
+			if (process.platform === "linux") {
+				installCommand = ["sudo", "apt", "install", "gtkwave"];
+				installMessage = "Installing GTKWave via apt...";
+				requiresSudo = true;
+			} else if (process.platform === "darwin") {
+				installCommand = ["brew", "install", "gtkwave"];
+				installMessage = "Installing GTKWave via brew...";
+			} else {
+				vscode.window.showErrorMessage(`Please install GTKWave manually for ${process.platform}. Visit: http://gtkwave.sourceforge.net/`);
+				return false;
+			}
+
+			// Show sudo warning if needed
+			if (requiresSudo) {
+				this.outputChannel.appendLine("⚠️  This installation requires sudo privileges.");
+				this.outputChannel.appendLine("You will be prompted for your password in the terminal.");
+				this.outputChannel.appendLine("");
+
+				const proceed = await vscode.window.showWarningMessage(
+					"GTKWave installation requires sudo privileges. Continue?",
+					"Proceed",
+					"Cancel",
+					"Show Manual Instructions"
+				);
+
+				if (proceed === "Cancel") {
+					this.outputChannel.appendLine("Installation cancelled by user.");
+					return false;
+				} else if (proceed === "Show Manual Instructions") {
+					this.showGtkwaveManualInstallInstructions();
+					return false;
+				}
+			}
+
+			this.outputChannel.appendLine(installMessage);
+
+			if (requiresSudo) {
+				// Use terminal for sudo commands
+				const sudoSuccess = await this.runSudoCommandInTerminal(installCommand);
+				if (sudoSuccess) {
+					this.outputChannel.appendLine(`✅ GTKWave installed successfully!`);
+					vscode.window.showInformationMessage(`GTKWave installed successfully!`);
+					return true;
+				} else {
+					this.outputChannel.appendLine(`❌ Failed to install GTKWave via sudo`);
+					this.outputChannel.appendLine("");
+					this.outputChannel.appendLine("💡 This might be a sudo/password issue. Try manual installation:");
+					this.showGtkwaveManualInstallInstructions();
+					vscode.window.showErrorMessage(`Failed to install GTKWave. Check the terminal for details.`);
+					return false;
+				}
+			} else {
+				// Direct execution for non-sudo commands
+				const installResult = await this.runCommand(installCommand[0], installCommand.slice(1));
+				if (installResult.success) {
+					this.outputChannel.appendLine(`✅ GTKWave installed successfully!`);
+					vscode.window.showInformationMessage(`GTKWave installed successfully!`);
+					return true;
+				} else {
+					this.outputChannel.appendLine(`❌ Failed to install GTKWave: ${installResult.error}`);
+					vscode.window.showErrorMessage(`Failed to install GTKWave: ${installResult.error}`);
+					return false;
+				}
+			}
+		} catch (error: any) {
+			this.outputChannel.appendLine(`❌ Error installing GTKWave: ${error.message}`);
+			vscode.window.showErrorMessage(`Error installing GTKWave: ${error.message}`);
+			return false;
+		}
+	}
+
+	private showGtkwaveManualInstallInstructions(): void {
+		this.outputChannel.appendLine("");
+		this.outputChannel.appendLine("📋 GTKWave Manual Installation Instructions:");
+		this.outputChannel.appendLine("");
+
+		if (process.platform === "linux") {
+			this.outputChannel.appendLine("1. Open a terminal");
+			this.outputChannel.appendLine("2. Run: sudo apt update");
+			this.outputChannel.appendLine("3. Run: sudo apt install gtkwave");
+			this.outputChannel.appendLine("4. Verify: gtkwave --version");
+		} else if (process.platform === "darwin") {
+			this.outputChannel.appendLine("1. Install Homebrew if not already installed");
+			this.outputChannel.appendLine("2. Run: brew install gtkwave");
+			this.outputChannel.appendLine("3. Verify: gtkwave --version");
+		} else {
+			this.outputChannel.appendLine("1. Visit: http://gtkwave.sourceforge.net/");
+			this.outputChannel.appendLine("2. Download and install for your platform");
+			this.outputChannel.appendLine("3. Verify: gtkwave --version");
+		}
+
+		this.outputChannel.appendLine("");
+		this.outputChannel.appendLine("After installation, run 'Cocotb: Check Prerequisites' to verify.");
+		this.outputChannel.appendLine("");
+
+		vscode.window.showInformationMessage(
+			"GTKWave manual installation instructions shown in output channel. Run 'Cocotb: Check Prerequisites' after installation."
+		);
+	}
+
 	private showManualInstallInstructions(): void {
 		this.outputChannel.appendLine("");
 		this.outputChannel.appendLine("📋 Manual Installation Instructions:");
@@ -1138,3 +1286,4 @@ PYTHONPATH = .
 		CocotbRunner.current = undefined;
 	}
 }
+
