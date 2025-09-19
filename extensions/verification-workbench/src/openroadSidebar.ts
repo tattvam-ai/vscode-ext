@@ -211,15 +211,56 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 <head>
 	<meta charset="UTF-8" />
 	<style>
-		body{font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-sideBar-background); margin:0; padding:8px}
-		button{padding:4px 8px}
-		.section{margin-top:12px; font-weight:600}
+		body{font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-sideBar-background); margin:0; padding:12px}
+		button{
+			width: 100%;
+			padding: 10px 16px;
+			margin: 6px 0;
+			border: 1px solid #00ff41;
+			background: linear-gradient(135deg, #00ff41 0%, #00cc33 100%);
+			color: #000000;
+			border-radius: 6px;
+			cursor: pointer;
+			font-family: var(--vscode-font-family);
+			font-weight: 600;
+			font-size: 13px;
+			transition: all 0.2s ease;
+			box-shadow: 0 2px 4px rgba(0, 255, 65, 0.3);
+		}
+		button:hover{
+			background: linear-gradient(135deg, #00ff41 0%, #00ff66 100%);
+			box-shadow: 0 4px 8px rgba(0, 255, 65, 0.4);
+			transform: translateY(-1px);
+		}
+		button:active{
+			transform: translateY(0);
+			box-shadow: 0 2px 4px rgba(0, 255, 65, 0.3);
+		}
+		.section{margin-top:12px; font-weight:600; padding-bottom: 8px; border-bottom: 1px solid var(--vscode-panel-border);}
 		.small{opacity:0.8; font-size:12px}
 		.kv{display:grid; grid-template-columns: 110px 1fr; gap:6px; font-size:12px}
 		.code{font-family: var(--vscode-editor-font-family); font-size:11px; opacity:0.8}
 		.details{margin-top:8px}
-		.toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px}
-		.btn-mini{padding:2px 6px; font-size:11px; margin-left:6px}
+		.toolbar{display:block; margin-bottom:8px}
+		.btn-mini{
+			width: auto;
+			padding: 6px 12px;
+			font-size: 11px;
+			margin-left: 6px;
+			border: 1px solid #00ff41;
+			background: linear-gradient(135deg, #00ff41 0%, #00cc33 100%);
+			color: #000000;
+			border-radius: 4px;
+			cursor: pointer;
+			font-weight: 600;
+			transition: all 0.2s ease;
+			box-shadow: 0 1px 2px rgba(0, 255, 65, 0.3);
+		}
+		.btn-mini:hover{
+			background: linear-gradient(135deg, #00ff41 0%, #00ff66 100%);
+			box-shadow: 0 2px 4px rgba(0, 255, 65, 0.4);
+			transform: translateY(-1px);
+		}
 		.file-row{display:flex; align-items:center; justify-content:space-between; gap:6px; padding:2px 0}
 		.file-row code{flex:1; overflow:hidden; text-overflow:ellipsis}
 	</style>
@@ -227,11 +268,11 @@ export class OpenroadSidebar implements vscode.WebviewViewProvider {
 <body>
 	<div class="section">Actions</div>
 	<div class="toolbar">
-		<button id="run">Run</button>
-		<button id="stop">Stop</button>
-		<button id="clean">Clean</button>
-		<button id="gui">GUI</button>
-		<button id="cfg">Configure</button>
+		<button id="run">▶️ Run</button>
+		<button id="stop">⏹️ Stop</button>
+		<button id="clean">🧹 Clean</button>
+		<button id="gui">🖥️ GUI</button>
+		<button id="cfg">⚙️ Configure</button>
 	</div>
 
 	<div class="section">Status</div>

@@ -57,17 +57,17 @@
 				{
 					"id": "aiTerminalContainer",
 					"title": "Chip Assistant",
-					"icon": "$(circuit-board)"
+					"icon": "$(robot)"
 				},
 				{
 					"id": "openroadContainer",
 					"title": "OpenROAD",
-					"icon": "$(circuit-board)"
+					"icon": "$(tools)"
 				},
 				{
 					"id": "cocotbContainer",
 					"title": "Cocotb",
-					"icon": "$(test-view-icon)"
+					"icon": "$(beaker)"
 				}
 			]
 		},

@@ -68,6 +68,11 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 						}
 						break;
 					}
+					case "implementTests": {
+						// Trigger AI assistant to help implement tests
+						await vscode.commands.executeCommand("chipAssistant.cocotbTestSelection");
+						break;
+					}
 				}
 			},
 			undefined,
@@ -119,17 +124,27 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		}
 		.button {
 			width: 100%;
-			padding: 8px 12px;
-			margin: 4px 0;
-			border: 1px solid var(--vscode-button-border, transparent);
-			background: var(--vscode-button-background);
-			color: var(--vscode-button-foreground);
-			border-radius: 4px;
+			padding: 10px 16px;
+			margin: 6px 0;
+			border: 1px solid #00ff41;
+			background: linear-gradient(135deg, #00ff41 0%, #00cc33 100%);
+			color: #000000;
+			border-radius: 6px;
 			cursor: pointer;
 			font-family: var(--vscode-font-family);
+			font-weight: 600;
+			font-size: 13px;
+			transition: all 0.2s ease;
+			box-shadow: 0 2px 4px rgba(0, 255, 65, 0.3);
 		}
 		.button:hover {
-			background: var(--vscode-button-hoverBackground);
+			background: linear-gradient(135deg, #00ff41 0%, #00ff66 100%);
+			box-shadow: 0 4px 8px rgba(0, 255, 65, 0.4);
+			transform: translateY(-1px);
+		}
+		.button:active {
+			transform: translateY(0);
+			box-shadow: 0 2px 4px rgba(0, 255, 65, 0.3);
 		}
 		.button:disabled {
 			opacity: 0.6;
@@ -137,17 +152,21 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		}
 		.status {
 			margin: 8px 0;
-			padding: 8px;
-			border-radius: 4px;
+			padding: 10px 12px;
+			border-radius: 6px;
 			font-size: 12px;
+			font-weight: 600;
+			text-align: center;
 		}
 		.status.running {
-			background: var(--vscode-inputValidation-infoBackground);
-			border: 1px solid var(--vscode-inputValidation-infoBorder);
+			background: linear-gradient(135deg, rgba(0, 255, 65, 0.2) 0%, rgba(0, 204, 51, 0.2) 100%);
+			border: 1px solid #00ff41;
+			color: #00ff41;
 		}
 		.status.stopped {
-			background: var(--vscode-inputValidation-warningBackground);
-			border: 1px solid var(--vscode-inputValidation-warningBorder);
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 255, 255, 0.3);
+			color: var(--vscode-foreground);
 		}
 		.prerequisites {
 			margin: 8px 0;
@@ -190,9 +209,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 	<div class="section">
 		<div class="section-title">Test Control</div>
 		<div id="status" class="status stopped">Tests stopped</div>
-		<button id="runBtn" class="button">Run Tests</button>
-		<button id="stopBtn" class="button" disabled>Stop Tests</button>
-		<button id="cleanBtn" class="button">Clean Tests</button>
+		<button id="implementBtn" class="button">🤖 Implement Tests</button>
+		<button id="runBtn" class="button">▶️ Run Tests</button>
+		<button id="stopBtn" class="button" disabled>⏹️ Stop Tests</button>
+		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
 	</div>
 
 	<div class="section">
@@ -262,6 +282,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		}
 
 		// Event listeners
+		document.getElementById('implementBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'implementTests' });
+		});
+
 		document.getElementById('runBtn').addEventListener('click', () => {
 			vscode.postMessage({ command: 'runTests' });
 		});
