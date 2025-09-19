@@ -59,18 +59,16 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 						this._postMessage({ command: "installResult", payload: { component: "simulator", success } });
 						break;
 					}
-					case "generateMakefile": {
-						const testDir = message.testDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-						const designFile = message.designFile;
-						const testFile = message.testFile;
-						if (testDir && designFile && testFile) {
-							await this._runner.generateMakefile(testDir, designFile, testFile);
-						}
+					case "browseTestDirectory": {
+						await vscode.commands.executeCommand("cocotb.setTestDirectory");
+						// Update the display
+						const cfg = vscode.workspace.getConfiguration();
+						const testDir = cfg.get<string>("cocotb.testDirectory", "");
+						this._postMessage({ command: "updateTestDirectory", payload: testDir });
 						break;
 					}
-					case "implementTests": {
-						// Trigger AI assistant to help implement tests
-						await vscode.commands.executeCommand("chipAssistant.implementCocotbTests");
+					case "generateMakefile": {
+						await vscode.commands.executeCommand("cocotb.generateMakefile");
 						break;
 					}
 				}
@@ -177,6 +175,39 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			justify-content: space-between;
 			margin: 2px 0;
 		}
+
+		.config-item {
+			margin-bottom: 15px;
+		}
+
+		.config-item label {
+			display: block;
+			margin-bottom: 5px;
+			font-weight: bold;
+			color: #40ff40;
+		}
+
+		.path-input {
+			display: flex;
+			gap: 5px;
+			margin-bottom: 10px;
+		}
+
+		.path-input input {
+			flex: 1;
+			padding: 6px 10px;
+			background: #1e2a1e;
+			border: 1px solid #40ff40;
+			border-radius: 4px;
+			color: #ffffff;
+			font-size: 12px;
+		}
+
+		.button.small {
+			padding: 6px 10px;
+			font-size: 11px;
+			min-width: auto;
+		}
 		.prerequisite.ok {
 			color: var(--vscode-testing-iconPassed);
 		}
@@ -207,17 +238,20 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 	<div class="header">Cocotb Test Manager</div>
 
 	<div class="section">
-		<div class="section-title">Test Control</div>
-		<div id="status" class="status stopped">Tests stopped</div>
-		<button id="implementBtn" class="button">🤖 Implement Tests</button>
-		<button id="runBtn" class="button">▶️ Run Tests</button>
-		<button id="stopBtn" class="button" disabled>⏹️ Stop Tests</button>
-		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
+		<div class="section-title">Configuration</div>
+		<div class="config-item">
+			<label for="testDirPath">Test Directory:</label>
+			<div class="path-input">
+				<input type="text" id="testDirPath" placeholder="Auto-detected or click Browse..." readonly>
+				<button id="browseBtn" class="button small">📁 Browse</button>
+			</div>
+		</div>
+		<button id="generateMakefileBtn" class="button">📄 Generate Makefile</button>
 	</div>
 
 	<div class="section">
-		<div class="section-title">Setup</div>
-		<button id="checkBtn" class="button">Check Prerequisites</button>
+		<div class="section-title">Setup & Testing</div>
+		<button id="checkBtn" class="button">🔍 Check Prerequisites</button>
 		<div id="prerequisites" class="prerequisites" style="display: none;">
 			<div class="prerequisite">
 				<span>Python:</span>
@@ -234,13 +268,11 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 				<button id="installSimulatorBtn" class="button" style="width: auto; margin-left: 8px; padding: 4px 8px; font-size: 11px;">Install</button>
 			</div>
 		</div>
-	</div>
 
-	<div class="section">
-		<div class="section-title">Generate Makefile</div>
-		<input type="text" id="designFile" placeholder="Design file path (e.g., design.v)">
-		<input type="text" id="testFile" placeholder="Test file path (e.g., test_design.py)">
-		<button id="generateBtn" class="button">Generate Makefile</button>
+		<div id="status" class="status stopped">Tests stopped</div>
+		<button id="runBtn" class="button">▶️ Run Tests</button>
+		<button id="stopBtn" class="button" disabled>⏹️ Stop Tests</button>
+		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
 	</div>
 
 	<script>
@@ -282,10 +314,17 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		}
 
 		// Event listeners
-		document.getElementById('implementBtn').addEventListener('click', () => {
-			vscode.postMessage({ command: 'implementTests' });
+
+		// Configuration
+		document.getElementById('browseBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'browseTestDirectory' });
 		});
 
+		document.getElementById('generateMakefileBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'generateMakefile' });
+		});
+
+		// Test execution
 		document.getElementById('runBtn').addEventListener('click', () => {
 			vscode.postMessage({ command: 'runTests' });
 		});
@@ -310,19 +349,15 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			vscode.postMessage({ command: 'installSimulator' });
 		});
 
-		document.getElementById('generateBtn').addEventListener('click', () => {
-			const designFile = document.getElementById('designFile').value;
-			const testFile = document.getElementById('testFile').value;
-			if (designFile && testFile) {
-				vscode.postMessage({
-					command: 'generateMakefile',
-					designFile: designFile,
-					testFile: testFile
-				});
-			} else {
-				vscode.window.showErrorMessage('Please provide both design file and test file paths');
-			}
-		});
+
+		// Update test directory display
+		function updateTestDirectory(testDir) {
+			const testDirInput = document.getElementById('testDirPath');
+			testDirInput.value = testDir || 'Auto-detected or click Browse...';
+		}
+
+		// Initialize test directory display
+		updateTestDirectory('${vscode.workspace.getConfiguration().get<string>("cocotb.testDirectory", "")}');
 
 		// Handle messages from extension
 		window.addEventListener('message', event => {
@@ -333,6 +368,9 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 					break;
 				case 'prerequisites':
 					updatePrerequisites(message.payload);
+					break;
+				case 'updateTestDirectory':
+					updateTestDirectory(message.payload);
 					break;
 				case 'installResult':
 					// Refresh prerequisites after installation

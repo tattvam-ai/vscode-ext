@@ -85,20 +85,10 @@ export class CocotbRunner implements vscode.Disposable {
 		const pythonPath = cfg.get<string>("cocotb.python.path", "");
 		const testDir = cfg.get<string>("cocotb.testDirectory", "");
 
-		// Determine test directory
-		let targetDir = testDir;
+		// Step 1: Determine test directory (where Makefile should be)
+		let targetDir = await this.getTestDirectory(testDir, testPath);
 		if (!targetDir) {
-			if (testPath) {
-				targetDir = path.dirname(testPath);
-			} else {
-				// Try to find cocotb tests in workspace
-				const foundDir = await this.findCocotbTestDirectory();
-				if (!foundDir) {
-					vscode.window.showErrorMessage("No cocotb test directory found. Please configure 'cocotb.testDirectory' or open a file in a cocotb test directory.");
-					return;
-				}
-				targetDir = foundDir;
-			}
+			return; // User cancelled
 		}
 
 		// Check if Makefile exists
@@ -109,7 +99,7 @@ export class CocotbRunner implements vscode.Disposable {
 				"Generate Makefile",
 				"Cancel"
 			);
-			
+
 			if (generate === "Generate Makefile") {
 				// Use the existing generateMakefile command
 				await vscode.commands.executeCommand("cocotb.generateMakefile");
@@ -203,17 +193,15 @@ export class CocotbRunner implements vscode.Disposable {
 			return;
 		}
 
+		// Use the same directory detection logic as runTests
 		const cfg = vscode.workspace.getConfiguration();
 		const testDir = cfg.get<string>("cocotb.testDirectory", "");
+		const testPath = vscode.window.activeTextEditor?.document.uri.fsPath;
 
-		let targetDir = testDir;
+		// Step 1: Determine test directory (same as runTests)
+		let targetDir = await this.getTestDirectory(testDir, testPath);
 		if (!targetDir) {
-			const foundDir = await this.findCocotbTestDirectory();
-			if (!foundDir) {
-				vscode.window.showErrorMessage("No cocotb test directory found.");
-				return;
-			}
-			targetDir = foundDir;
+			return; // User cancelled
 		}
 
 		this.outputChannel.clear();
@@ -221,10 +209,42 @@ export class CocotbRunner implements vscode.Disposable {
 		this.outputChannel.appendLine(`Cleaning cocotb test artifacts in: ${targetDir}`);
 		this.outputChannel.appendLine("");
 
+		// Use the same environment setup as runTests
+		const simulator = cfg.get<string>("cocotb.simulator.type", "iverilog");
+		const simulatorPath = cfg.get<string>("cocotb.simulator.path", "");
+		const pythonPath = cfg.get<string>("cocotb.python.path", "");
+
+		// Build environment variables - same as runTests
+		const env = { ...process.env };
+		if (simulatorPath) {
+			env.PATH = `${simulatorPath}:${env.PATH}`;
+		}
+		if (pythonPath) {
+			env.PYTHONPATH = pythonPath;
+		}
+
+		// If we're using the extension's virtual environment, update PATH and PYTHON
+		const configuredPythonPath = cfg.get<string>("cocotb.python.path", "");
+		if (configuredPythonPath && configuredPythonPath.includes(".cocotb-env")) {
+			// Using extension's virtual environment
+			const venvBinDir = path.dirname(configuredPythonPath);
+			env.PATH = `${venvBinDir}:${env.PATH}`;
+			env.PYTHON = configuredPythonPath;
+			this.outputChannel.appendLine(`Using virtual environment: ${venvBinDir}`);
+		}
+
+		// Set cocotb-specific environment variables
+		if (simulator === "iverilog") {
+			env.SIM = "icarus";
+			env.IVERILOG = simulatorPath || "iverilog";
+		} else {
+			env.SIM = simulator;
+		}
+
 		this.process = spawn("make", ["clean"], {
 			cwd: targetDir,
 			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env }
+			env: env
 		});
 
 		if (this.process.stdout) {
@@ -907,38 +927,154 @@ PYTHONPATH = .
 		this.outputChannel.appendLine(`  Simulator path: ${simulatorPath || "not set"}`);
 	}
 
-	private async findCocotbTestDirectory(): Promise<string | undefined> {
+	public async getTestDirectoryPublic(configuredDir: string, activeFilePath?: string): Promise<string | undefined> {
+		return this.getTestDirectory(configuredDir, activeFilePath);
+	}
+
+	private async getTestDirectory(configuredDir: string, activeFilePath?: string): Promise<string | undefined> {
+		// Priority 1: User-configured directory
+		if (configuredDir) {
+			this.outputChannel.appendLine(`Using configured test directory: ${configuredDir}`);
+			return configuredDir;
+		}
+
+		// Priority 2: Directory of currently active file
+		if (activeFilePath) {
+			const dir = path.dirname(activeFilePath);
+			this.outputChannel.appendLine(`Using test directory from active file: ${dir}`);
+			return dir;
+		}
+
+		// Priority 3: Auto-detect or ask user
+		const foundDirs = await this.findAllCocotbTestDirectories();
+
+		if (foundDirs.length === 0) {
+			// No cocotb directories found - ask user what to do
+			const action = await vscode.window.showInformationMessage(
+				"No test directory specified. Choose how to proceed:",
+				"Browse for Directory",
+				"Configure Test Directory",
+				"Use Current Workspace",
+				"Cancel"
+			);
+
+			switch (action) {
+				case "Browse for Directory":
+					const selectedDir = await vscode.window.showOpenDialog({
+						canSelectFiles: false,
+						canSelectFolders: true,
+						canSelectMany: false,
+						openLabel: "Select Test Directory (where Makefile is/will be)"
+					});
+					if (selectedDir && selectedDir[0]) {
+						const dir = selectedDir[0].fsPath;
+						this.outputChannel.appendLine(`Selected test directory: ${dir}`);
+						return dir;
+					}
+					return undefined;
+
+				case "Configure Test Directory":
+					vscode.commands.executeCommand('workbench.action.openSettings', 'cocotb.testDirectory');
+					vscode.window.showInformationMessage("Please set 'cocotb.testDirectory' and try again.");
+					return undefined;
+
+				case "Use Current Workspace":
+					const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+					if (workspace) {
+						this.outputChannel.appendLine(`Using workspace root as test directory: ${workspace}`);
+						return workspace;
+					}
+					return undefined;
+
+				default:
+					return undefined;
+			}
+		} else if (foundDirs.length === 1) {
+			// Single directory found
+			const dir = foundDirs[0];
+			this.outputChannel.appendLine(`Auto-detected test directory: ${dir}`);
+			return dir;
+		} else {
+			// Multiple directories found - let user choose
+			const items = foundDirs.map(dir => ({
+				label: path.basename(dir),
+				description: dir,
+				detail: `Contains Makefile with cocotb configuration`
+			}));
+
+			const selected = await vscode.window.showQuickPick(items, {
+				placeHolder: "Multiple test directories found. Select one:",
+				ignoreFocusOut: true
+			});
+
+			if (selected) {
+				const dir = selected.description;
+				this.outputChannel.appendLine(`Selected test directory: ${dir}`);
+				return dir;
+			}
+			return undefined;
+		}
+	}
+
+	private async findAllCocotbTestDirectories(): Promise<string[]> {
 		const workspaceFolders = vscode.workspace.workspaceFolders;
-		if (!workspaceFolders) return undefined;
+		if (!workspaceFolders) return [];
+
+		const cocotbDirs: string[] = [];
 
 		for (const folder of workspaceFolders) {
-			// Look for Makefile with cocotb content
+			// Look for Makefile with cocotb content in root
 			const makefilePath = path.join(folder.uri.fsPath, "Makefile");
 			if (fs.existsSync(makefilePath)) {
 				const content = fs.readFileSync(makefilePath, 'utf8');
 				if (content.includes('cocotb') || content.includes('Makefile.sim')) {
-					return folder.uri.fsPath;
+					cocotbDirs.push(folder.uri.fsPath);
 				}
 			}
 
-			// Look in subdirectories
-			const subdirs = fs.readdirSync(folder.uri.fsPath, { withFileTypes: true })
-				.filter(dirent => dirent.isDirectory())
-				.map(dirent => dirent.name);
-
-			for (const subdir of subdirs) {
-				const subdirPath = path.join(folder.uri.fsPath, subdir);
-				const subMakefilePath = path.join(subdirPath, "Makefile");
-				if (fs.existsSync(subMakefilePath)) {
-					const content = fs.readFileSync(subMakefilePath, 'utf8');
-					if (content.includes('cocotb') || content.includes('Makefile.sim')) {
-						return subdirPath;
-					}
-				}
-			}
+			// Look in subdirectories (recursive search, max 3 levels deep)
+			this.searchCocotbDirectoriesRecursive(folder.uri.fsPath, cocotbDirs, 3);
 		}
 
-		return undefined;
+		return cocotbDirs;
+	}
+
+	private searchCocotbDirectoriesRecursive(dir: string, results: string[], maxDepth: number): void {
+		if (maxDepth <= 0) return;
+
+		try {
+			const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+			for (const entry of entries) {
+				if (entry.isDirectory()) {
+					const subdirPath = path.join(dir, entry.name);
+
+					// Skip common non-test directories
+					if (['node_modules', '.git', '__pycache__', '.vscode', 'build', 'dist'].includes(entry.name)) {
+						continue;
+					}
+
+					// Check for Makefile with cocotb content
+					const makefilePath = path.join(subdirPath, "Makefile");
+					if (fs.existsSync(makefilePath)) {
+						const content = fs.readFileSync(makefilePath, 'utf8');
+						if (content.includes('cocotb') || content.includes('Makefile.sim')) {
+							results.push(subdirPath);
+						}
+					}
+
+					// Recurse into subdirectory
+					this.searchCocotbDirectoriesRecursive(subdirPath, results, maxDepth - 1);
+				}
+			}
+		} catch (err) {
+			// Ignore permission errors or other filesystem issues
+		}
+	}
+
+	private async findCocotbTestDirectory(): Promise<string | undefined> {
+		const dirs = await this.findAllCocotbTestDirectories();
+		return dirs.length > 0 ? dirs[0] : undefined;
 	}
 
 	private async runCommand(command: string, args: string[]): Promise<{ success: boolean; output: string; error: string }> {

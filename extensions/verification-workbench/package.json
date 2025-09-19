@@ -46,6 +46,7 @@
 			{ "command": "cocotb.stopTests", "title": "Cocotb: Stop Tests" },
 			{ "command": "cocotb.cleanTests", "title": "Cocotb: Clean Tests" },
 			{ "command": "cocotb.generateMakefile", "title": "Cocotb: Generate Makefile" },
+			{ "command": "cocotb.setTestDirectory", "title": "Cocotb: Set Test Directory" },
 			{ "command": "cocotb.checkPrerequisites", "title": "Cocotb: Check Prerequisites" },
 			{ "command": "cocotb.installCocotb", "title": "Cocotb: Install Cocotb" },
 			{ "command": "cocotb.installSimulator", "title": "Cocotb: Install Simulator" },
@@ -180,7 +181,7 @@
 				"cocotb.testDirectory": {
 					"type": "string",
 					"default": "",
-					"description": "Directory containing cocotb tests (auto-detected if empty)"
+					"description": "Primary test directory where Makefile is located and tests will run (auto-detected if empty)"
 				},
 				"cocotb.autoSetup": {
 					"type": "boolean",
@@ -203,6 +204,7 @@
 				{ "command": "cocotb.stopTests" },
 				{ "command": "cocotb.cleanTests" },
 				{ "command": "cocotb.generateMakefile" },
+				{ "command": "cocotb.setTestDirectory" },
 				{ "command": "cocotb.checkPrerequisites" },
 				{ "command": "cocotb.installCocotb" },
 				{ "command": "cocotb.installSimulator" },

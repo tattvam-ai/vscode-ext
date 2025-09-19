@@ -550,25 +550,52 @@ export function activate(context: vscode.ExtensionContext) {
 	// Cocotb: Generate Makefile
 	const generateCocotbMakefile = vscode.commands.registerCommand("cocotb.generateMakefile", async () => {
 		const runner = CocotbRunner.getInstance();
-		const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-		if (!workspaceFolder) {
-			vscode.window.showErrorMessage("No workspace folder open");
-			return;
+
+		// Step 1: Get test directory (where Makefile will be created)
+		const cfg = vscode.workspace.getConfiguration();
+		const configuredTestDir = cfg.get<string>("cocotb.testDirectory", "");
+		const activeFilePath = vscode.window.activeTextEditor?.document.uri.fsPath;
+
+		// Use the same logic as runTests for consistency
+		const testDirectory = await runner.getTestDirectoryPublic(configuredTestDir, activeFilePath);
+		if (!testDirectory) {
+			return; // User cancelled
 		}
 
+		// Step 2: Get design and test files
 		const designFile = await vscode.window.showInputBox({
-			prompt: "Enter design file path (e.g., design.v)",
+			prompt: "Enter design file path (relative to test directory or absolute)",
 			placeHolder: "design.v"
 		});
 		if (!designFile) return;
 
 		const testFile = await vscode.window.showInputBox({
-			prompt: "Enter test file path (e.g., test_design.py)",
+			prompt: "Enter test file path (relative to test directory or absolute)",
 			placeHolder: "test_design.py"
 		});
 		if (!testFile) return;
 
-		await runner.generateMakefile(workspaceFolder.uri.fsPath, designFile, testFile);
+		await runner.generateMakefile(testDirectory, designFile, testFile);
+	});
+
+	// Cocotb: Set Test Directory
+	const setCocotbTestDirectory = vscode.commands.registerCommand("cocotb.setTestDirectory", async () => {
+		const selectedDir = await vscode.window.showOpenDialog({
+			canSelectFiles: false,
+			canSelectFolders: true,
+			canSelectMany: false,
+			openLabel: "Select Test Directory (where Makefile is/will be)"
+		});
+
+		if (selectedDir && selectedDir[0]) {
+			const dirPath = selectedDir[0].fsPath;
+			await vscode.workspace.getConfiguration().update(
+				'cocotb.testDirectory',
+				dirPath,
+				vscode.ConfigurationTarget.Workspace
+			);
+			vscode.window.showInformationMessage(`Test directory set to: ${dirPath}`);
+		}
 	});
 
 	// Cocotb: Check Prerequisites
@@ -694,6 +721,7 @@ export function activate(context: vscode.ExtensionContext) {
 		stopCocotbTests,
 		cleanCocotbTests,
 		generateCocotbMakefile,
+		setCocotbTestDirectory,
 		checkCocotbPrerequisites,
 		installCocotb,
 		installSimulator,
