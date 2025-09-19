@@ -94,17 +94,8 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			const config = vscode.workspace.getConfiguration();
 			const model = config.get<string>("chipAssistant.openai.model", "o3-mini");
 			const baseUrl = config.get<string>("chipAssistant.openai.baseUrl", "https://api.openai.com/v1");
-			const timeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 60000);
+			const timeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 120000);
 			const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
-			// Encourage model to format code with proper fenced blocks
-			const formattingHint = "\n\nWhen you include code, use fenced triple backticks with appropriate language (```systemverilog for RTL, ```python for cocotb tests). Show code first, then concise bullet notes.";
-			const effectiveUser = `${userText}${formattingHint}`;
-
-			// Optionally show the effective prompt being sent
-			const showPrompt = config.get<boolean>("chipAssistant.showEffectivePrompt", true);
-			if (showPrompt) {
-				this._postMessage({ command: "chat:assistant", payload: { text: `Effective prompt:\n\n${effectiveUser}` } });
-			}
 
 			if (!apiKey) {
 				this._postMessage({ command: "chat:error", payload: { message: "OpenAI API key not set. Run 'Chip Assistant: Set OpenAI API Key'." } });
@@ -127,7 +118,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 						input: [
 							{
 								role: "user",
-								content: [{ type: "text", text: effectiveUser }],
+								content: [{ type: "text", text: userText }],
 							},
 						],
 					}),
@@ -156,8 +147,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 						body: JSON.stringify({
 							model: model === "o3-mini" ? "gpt-4o-mini" : model,
 							messages: [
-								{ role: "system", content: "You are Chip Assistant, a helpful verification assistant for RTL, testbenches, SystemVerilog, and cocotb. When you include code, always use fenced triple backticks with appropriate language (```systemverilog for RTL, ```python for cocotb tests). Show code first, then concise bullet notes." },
-								{ role: "user", content: effectiveUser },
+								{ role: "user", content: userText },
 							],
 							temperature: 0.2,
 						}),
@@ -291,7 +281,6 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			const input = document.getElementById('promptInput');
 			const text = input.value.trim();
 			if (!text) return;
-			addMessage('user', text);
 			vscode.postMessage({ command: 'chat:send', text });
 			input.value = '';
 		}
@@ -316,6 +305,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					break;
 				}
 				case 'chat:userEcho': {
+					addMessage('user', message.payload?.text || '');
 					break;
 				}
 			}
