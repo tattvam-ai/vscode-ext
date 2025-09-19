@@ -34,6 +34,8 @@ import { fetch } from "undici";
 import { OpenroadConfigPanel } from "./openroadConfigPanel";
 import { OpenroadRunner } from "./openroadRunner";
 import { OpenroadSidebar } from "./openroadSidebar";
+import { CocotbRunner } from "./cocotbRunner";
+import { CocotbSidebar } from "./cocotbSidebar";
 // import { OpenroadResultsSidebar } from "./openroadResultsSidebar";
 
 // Simple Chip Assistant Provider
@@ -94,8 +96,8 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			const baseUrl = config.get<string>("chipAssistant.openai.baseUrl", "https://api.openai.com/v1");
 			const timeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 60000);
 			const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
-			// Encourage model to format SystemVerilog with proper fenced blocks
-			const formattingHint = "\n\nWhen you include code, use fenced triple backticks with language systemverilog (```systemverilog). Show code first, then concise bullet notes.";
+			// Encourage model to format code with proper fenced blocks
+			const formattingHint = "\n\nWhen you include code, use fenced triple backticks with appropriate language (```systemverilog for RTL, ```python for cocotb tests). Show code first, then concise bullet notes.";
 			const effectiveUser = `${userText}${formattingHint}`;
 
 			// Optionally show the effective prompt being sent
@@ -154,7 +156,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 						body: JSON.stringify({
 							model: model === "o3-mini" ? "gpt-4o-mini" : model,
 							messages: [
-								{ role: "system", content: "You are Chip Assistant, a helpful verification assistant for RTL, testbenches, and SystemVerilog. When you include code, always use fenced triple backticks with language systemverilog (```systemverilog). Show code first, then concise bullet notes." },
+								{ role: "system", content: "You are Chip Assistant, a helpful verification assistant for RTL, testbenches, SystemVerilog, and cocotb. When you include code, always use fenced triple backticks with appropriate language (```systemverilog for RTL, ```python for cocotb tests). Show code first, then concise bullet notes." },
 								{ role: "user", content: effectiveUser },
 							],
 							temperature: 0.2,
@@ -362,6 +364,7 @@ class SelectionIntentCodeLensProvider implements vscode.CodeLensProvider {
 			{ title: "Find Bugs", command: "chipAssistant.findBugsSelection" },
 			{ title: "SV Assertions", command: "chipAssistant.assertionsSelection" },
 			{ title: "Optimize", command: "chipAssistant.optimizeSelection" },
+			{ title: "Cocotb Test", command: "chipAssistant.cocotbTestSelection" },
 		];
 
 		return items.map(it => new vscode.CodeLens(range, { title: it.title, command: it.command }));
@@ -436,6 +439,14 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.registerWebviewViewProvider(
 			OpenroadSidebar.viewType,
 			openroadSidebarProvider,
+		),
+	);
+
+	const cocotbSidebarProvider = new CocotbSidebar(context.extensionUri);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(
+			CocotbSidebar.viewType,
+			cocotbSidebarProvider,
 		),
 	);
 
@@ -517,6 +528,118 @@ export function activate(context: vscode.ExtensionContext) {
 		updateOpenroadStatusItem();
 	});
 
+	// Cocotb: Run Tests
+	const runCocotbTests = vscode.commands.registerCommand("cocotb.runTests", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.runTests();
+	});
+
+	// Cocotb: Stop Tests
+	const stopCocotbTests = vscode.commands.registerCommand("cocotb.stopTests", () => {
+		const runner = CocotbRunner.getInstance();
+		runner.stopTests();
+	});
+
+	// Cocotb: Clean Tests
+	const cleanCocotbTests = vscode.commands.registerCommand("cocotb.cleanTests", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.cleanTests();
+	});
+
+	// Cocotb: Generate Makefile
+	const generateCocotbMakefile = vscode.commands.registerCommand("cocotb.generateMakefile", async () => {
+		const runner = CocotbRunner.getInstance();
+		const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+		if (!workspaceFolder) {
+			vscode.window.showErrorMessage("No workspace folder open");
+			return;
+		}
+
+		const designFile = await vscode.window.showInputBox({
+			prompt: "Enter design file path (e.g., design.v)",
+			placeHolder: "design.v"
+		});
+		if (!designFile) return;
+
+		const testFile = await vscode.window.showInputBox({
+			prompt: "Enter test file path (e.g., test_design.py)",
+			placeHolder: "test_design.py"
+		});
+		if (!testFile) return;
+
+		await runner.generateMakefile(workspaceFolder.uri.fsPath, designFile, testFile);
+	});
+
+	// Cocotb: Check Prerequisites
+	const checkCocotbPrerequisites = vscode.commands.registerCommand("cocotb.checkPrerequisites", async () => {
+		const runner = CocotbRunner.getInstance();
+		const results = await runner.checkPrerequisites();
+
+		let message = "Cocotb Prerequisites Check:\n";
+		message += `Python: ${results.python ? "✓ OK" : "✗ Missing"}\n`;
+		message += `Cocotb: ${results.cocotb ? "✓ OK" : "✗ Missing"}\n`;
+		message += `Simulator: ${results.simulator ? "✓ OK" : "✗ Missing"}`;
+
+		if (results.python && results.cocotb && results.simulator) {
+			vscode.window.showInformationMessage(message);
+		} else {
+			// Offer to install missing components
+			const actions = [];
+			if (!results.cocotb) {
+				actions.push("Install Cocotb");
+			}
+			if (!results.simulator) {
+				actions.push("Install Simulator");
+			}
+
+			if (actions.length > 0) {
+				const choice = await vscode.window.showWarningMessage(message, ...actions);
+				if (choice === "Install Cocotb") {
+					await runner.installCocotb();
+				} else if (choice === "Install Simulator") {
+					await runner.installSimulator();
+				}
+			} else {
+				vscode.window.showWarningMessage(message);
+			}
+		}
+	});
+
+	// Cocotb: Install Cocotb
+	const installCocotb = vscode.commands.registerCommand("cocotb.installCocotb", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.installCocotb();
+	});
+
+	// Cocotb: Install Simulator
+	const installSimulator = vscode.commands.registerCommand("cocotb.installSimulator", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.installSimulator();
+	});
+
+	// Cocotb: Debug Simulator Detection
+	const debugSimulatorDetection = vscode.commands.registerCommand("cocotb.debugSimulatorDetection", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.debugSimulatorDetection();
+	});
+
+	// Cocotb: Generate Testbench
+	const generateCocotbTestbench = vscode.commands.registerCommand("cocotb.generateTestbench", async () => {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) {
+			vscode.window.showErrorMessage("No active editor");
+			return;
+		}
+
+		const selectedText = editor.document.getText(editor.selection);
+		if (!selectedText) {
+			vscode.window.showErrorMessage("Please select RTL code to generate testbench for");
+			return;
+		}
+
+		await aiTerminalProvider.askWithIntent("Generate a cocotb testbench for the following RTL code", selectedText);
+	});
+
 	function registerSelectionIntent(command: string, intentLabel: string) {
 		return vscode.commands.registerCommand(command, async () => {
 			const editor = vscode.window.activeTextEditor;
@@ -546,6 +669,10 @@ export function activate(context: vscode.ExtensionContext) {
 		"chipAssistant.optimizeSelection",
 		"Optimize the following code",
 	);
+	const cocotbCmd = registerSelectionIntent(
+		"chipAssistant.cocotbTestSelection",
+		"Generate a cocotb testbench for the following RTL code",
+	);
 
 	// OpenROAD: Show Results Panel
 	// const showResults = vscode.commands.registerCommand("openroad.showResults", async () => {
@@ -562,10 +689,20 @@ export function activate(context: vscode.ExtensionContext) {
 		stopFlow,
 		cleanAll,
 		guiFinal,
+		runCocotbTests,
+		stopCocotbTests,
+		cleanCocotbTests,
+		generateCocotbMakefile,
+		checkCocotbPrerequisites,
+		installCocotb,
+		installSimulator,
+		debugSimulatorDetection,
+		generateCocotbTestbench,
 		explainCmd,
 		bugsCmd,
 		svaCmd,
 		optCmd,
+		cocotbCmd,
 	);
 
 	// Register inline CodeLens for selection intents
