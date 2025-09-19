@@ -70,7 +70,7 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 					}
 					case "implementTests": {
 						// Trigger AI assistant to help implement tests
-						await vscode.commands.executeCommand("chipAssistant.cocotbTestSelection");
+						await vscode.commands.executeCommand("chipAssistant.implementCocotbTests");
 						break;
 					}
 				}

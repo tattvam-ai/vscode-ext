@@ -104,9 +104,22 @@ export class CocotbRunner implements vscode.Disposable {
 		// Check if Makefile exists
 		const makefilePath = path.join(targetDir, "Makefile");
 		if (!fs.existsSync(makefilePath)) {
-			vscode.window.showErrorMessage(`No Makefile found in ${targetDir}. Cocotb requires a Makefile to run tests.`);
-			return;
+			const generate = await vscode.window.showInformationMessage(
+				`No Makefile found in ${targetDir}. Would you like to generate a basic Makefile for cocotb?`,
+				"Generate Makefile",
+				"Cancel"
+			);
+			
+			if (generate === "Generate Makefile") {
+				// Use the existing generateMakefile command
+				await vscode.commands.executeCommand("cocotb.generateMakefile");
+				return; // Exit so user can configure and try again
+			} else {
+				return; // User cancelled
+			}
 		}
+
+		this.outputChannel.appendLine(`Using existing Makefile: ${makefilePath}`);
 
 		this.outputChannel.clear();
 		this.outputChannel.show();
@@ -114,7 +127,7 @@ export class CocotbRunner implements vscode.Disposable {
 		this.outputChannel.appendLine(`Simulator: ${simulator}`);
 		this.outputChannel.appendLine("");
 
-		// Build environment variables
+		// Build environment variables - ensure we use the correct Python environment
 		const env = { ...process.env };
 		if (simulatorPath) {
 			env.PATH = `${simulatorPath}:${env.PATH}`;
@@ -123,10 +136,24 @@ export class CocotbRunner implements vscode.Disposable {
 			env.PYTHONPATH = pythonPath;
 		}
 
+		// If we're using the extension's virtual environment, update PATH and PYTHON
+		const config = vscode.workspace.getConfiguration();
+		const configuredPythonPath = config.get<string>("cocotb.python.path", "");
+		if (configuredPythonPath && configuredPythonPath.includes(".cocotb-env")) {
+			// Using extension's virtual environment
+			const venvBinDir = path.dirname(configuredPythonPath);
+			env.PATH = `${venvBinDir}:${env.PATH}`;
+			env.PYTHON = configuredPythonPath;
+			this.outputChannel.appendLine(`Using virtual environment: ${venvBinDir}`);
+		}
+
 		// Set cocotb-specific environment variables
-		env.SIM = simulator;
+		// Note: cocotb uses "icarus" for Icarus Verilog, not "iverilog"
 		if (simulator === "iverilog") {
+			env.SIM = "icarus";
 			env.IVERILOG = simulatorPath || "iverilog";
+		} else {
+			env.SIM = simulator;
 		}
 
 		// Start process
@@ -235,8 +262,8 @@ export class CocotbRunner implements vscode.Disposable {
 TOPLEVEL = ${designBasename}
 MODULE = ${testBasename}
 
-# Use iverilog as default simulator
-SIM = iverilog
+# Use icarus (Icarus Verilog) as default simulator
+SIM = icarus
 
 # Include cocotb makefile
 include \$(shell cocotb-config --makefiles)/Makefile.sim
@@ -257,53 +284,113 @@ PYTHONPATH = .
 	public async checkPrerequisites(): Promise<{ cocotb: boolean; simulator: boolean; python: boolean }> {
 		const results = { cocotb: false, simulator: false, python: false };
 
-		// Try to find the best Python to use
-		const pythonCommand = await this.findBestPython();
+		// Debug: Show environment info
+		this.outputChannel.appendLine("🔍 Environment Debug Info:");
+		this.outputChannel.appendLine(`VIRTUAL_ENV: ${process.env.VIRTUAL_ENV || "Not set"}`);
+		this.outputChannel.appendLine(`PATH: ${process.env.PATH?.substring(0, 200)}...`);
+		this.outputChannel.appendLine("");
 
-		try {
-			// Check Python first
-			const pythonResult = await this.runCommand(pythonCommand, ["--version"]);
-			results.python = pythonResult.success;
-		} catch {
-			results.python = false;
+		// Check cocotb in priority order: manual config > active venv > system-wide
+		const cfg = vscode.workspace.getConfiguration();
+		const manualPythonPath = cfg.get<string>("cocotb.python.path", "");
+
+		let pythonToCheck: string[];
+
+		if (manualPythonPath) {
+			// User manually configured Python path
+			pythonToCheck = [manualPythonPath];
+			this.outputChannel.appendLine(`Using manually configured Python: ${manualPythonPath}`);
+		} else if (process.env.VIRTUAL_ENV) {
+			// Virtual environment is active - check it first, then system
+			const venvPython = path.join(process.env.VIRTUAL_ENV, "bin", "python");
+			pythonToCheck = [venvPython, "python3", "python"];
+			this.outputChannel.appendLine(`Virtual environment detected: ${process.env.VIRTUAL_ENV}`);
+			this.outputChannel.appendLine(`Will check: venv python, then system python`);
+		} else {
+			// No virtual environment - check system-wide
+			pythonToCheck = ["python3", "python"];
+			this.outputChannel.appendLine(`No virtual environment detected, checking system python`);
 		}
 
-		if (!results.python) {
-			return results; // Can't check other things without Python
+		// Check each Python in order until we find one that works
+		let workingPython = "";
+		for (const pythonCmd of pythonToCheck) {
+			this.outputChannel.appendLine(`\nTesting Python: ${pythonCmd}`);
+
+			try {
+				// Check if Python exists and works
+				const pythonResult = await this.runCommand(pythonCmd, ["--version"]);
+				if (pythonResult.success) {
+					this.outputChannel.appendLine(`  ✅ Python found: ${pythonResult.output.trim()}`);
+					results.python = true;
+
+					// Check if this Python has cocotb
+					this.outputChannel.appendLine(`  Checking cocotb with: ${pythonCmd} -c "import cocotb; print('cocotb available')"`);
+					const cocotbResult = await this.runCommand(pythonCmd, ["-c", "import cocotb; print('cocotb available')"]);
+
+					if (cocotbResult.success) {
+						this.outputChannel.appendLine(`  ✅ Cocotb found: ${cocotbResult.output.trim()}`);
+						results.cocotb = true;
+						workingPython = pythonCmd;
+						break; // Found working Python with cocotb
+					} else {
+						this.outputChannel.appendLine(`  ❌ Cocotb not found: ${cocotbResult.error}`);
+					}
+				} else {
+					this.outputChannel.appendLine(`  ❌ Python not working: ${pythonResult.error}`);
+				}
+			} catch (err: any) {
+				this.outputChannel.appendLine(`  ❌ Python check exception: ${err.message}`);
+			}
 		}
 
-		try {
-			// Check cocotb using the best Python
-			const cocotbResult = await this.runCommand(pythonCommand, ["-c", "import cocotb; print('cocotb available')"]);
-			results.cocotb = cocotbResult.success;
-		} catch {
-			results.cocotb = false;
+		if (workingPython) {
+			this.outputChannel.appendLine(`\n✅ Using Python: ${workingPython}`);
+		} else {
+			this.outputChannel.appendLine(`\n❌ No working Python with cocotb found`);
 		}
 
 		try {
 			// Check simulator (iverilog by default)
+			this.outputChannel.appendLine(`\nChecking simulator...`);
 			const cfg = vscode.workspace.getConfiguration();
 			const simulator = cfg.get<string>("cocotb.simulator.type", "iverilog");
 			const simulatorPath = cfg.get<string>("cocotb.simulator.path", simulator);
 
+			this.outputChannel.appendLine(`Simulator type: ${simulator}`);
+			this.outputChannel.appendLine(`Simulator path: ${simulatorPath}`);
+
 			// Try multiple ways to detect iverilog
-			let simulatorResult = await this.runCommand(simulatorPath, ["-V"]);
+			this.outputChannel.appendLine(`Testing: ${simulatorPath} -v`);
+			let simulatorResult = await this.runCommand(simulatorPath, ["-v"]);
+			this.outputChannel.appendLine(`Result: success=${simulatorResult.success}, output="${simulatorResult.output}", error="${simulatorResult.error}"`);
 
 			if (!simulatorResult.success && simulator === "iverilog") {
 				// Try alternative names for iverilog
+				this.outputChannel.appendLine(`Primary command failed, trying alternatives...`);
 				const alternativeNames = ["iverilog", "iverilog-gtk", "iverilog-vpi"];
 				for (const altName of alternativeNames) {
-					simulatorResult = await this.runCommand(altName, ["-V"]);
+					this.outputChannel.appendLine(`  Testing: ${altName} -v`);
+					simulatorResult = await this.runCommand(altName, ["-v"]);
+					this.outputChannel.appendLine(`  Result: success=${simulatorResult.success}, output="${simulatorResult.output}", error="${simulatorResult.error}"`);
 					if (simulatorResult.success) {
 						// Update the configuration to use the working command
+						this.outputChannel.appendLine(`  ✅ Found working simulator: ${altName}`);
 						await cfg.update("cocotb.simulator.path", altName, vscode.ConfigurationTarget.Workspace);
 						break;
 					}
 				}
 			}
 
+			if (simulatorResult.success) {
+				this.outputChannel.appendLine(`✅ Simulator detected successfully`);
+			} else {
+				this.outputChannel.appendLine(`❌ Simulator detection failed`);
+			}
+
 			results.simulator = simulatorResult.success;
-		} catch {
+		} catch (err: any) {
+			this.outputChannel.appendLine(`❌ Simulator check exception: ${err.message}`);
 			results.simulator = false;
 		}
 
@@ -593,7 +680,7 @@ PYTHONPATH = .
 					this.outputChannel.appendLine(`    ✅ Found: ${path}`);
 
 					// Verify it's actually iverilog by checking version
-					const versionResult = await this.runCommand(cmd, ["-V"]);
+					const versionResult = await this.runCommand(cmd, ["-v"]);
 					if (versionResult.success) {
 						this.outputChannel.appendLine(`    ✅ Version check passed`);
 						return path;
@@ -623,7 +710,7 @@ PYTHONPATH = .
 					this.outputChannel.appendLine(`    ✅ Found executable: ${path}`);
 
 					// Verify it's actually iverilog
-					const versionResult = await this.runCommand(path, ["-V"]);
+					const versionResult = await this.runCommand(path, ["-v"]);
 					if (versionResult.success) {
 						this.outputChannel.appendLine(`    ✅ Version check passed`);
 						return path;
@@ -796,7 +883,7 @@ PYTHONPATH = .
 		for (const cmd of commands) {
 			this.outputChannel.appendLine(`Testing command: ${cmd}`);
 			try {
-				const result = await this.runCommand(cmd, cmd.includes("iverilog") ? ["-V"] : []);
+				const result = await this.runCommand(cmd, cmd.includes("iverilog") ? ["-v"] : []);
 				this.outputChannel.appendLine(`  Success: ${result.success}`);
 				if (result.output) {
 					this.outputChannel.appendLine(`  Output: ${result.output}`);

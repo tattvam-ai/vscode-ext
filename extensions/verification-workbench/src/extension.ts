@@ -94,7 +94,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			const config = vscode.workspace.getConfiguration();
 			const model = config.get<string>("chipAssistant.openai.model", "o3-mini");
 			const baseUrl = config.get<string>("chipAssistant.openai.baseUrl", "https://api.openai.com/v1");
-			const timeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 120000);
+			const timeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 180000);
 			const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
 
 			if (!apiKey) {
@@ -128,7 +128,8 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					const data: any = await resp.json();
 					assistantText = AITerminalProvider._extractTextFromResponses(data);
 				}
-			} catch (_err) {
+			} catch (err: any) {
+				console.log("Primary API call failed:", err.message);
 				// fallback
 			} finally {
 				clearTimeout(t);
@@ -159,6 +160,13 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					}
 					const data2: any = await resp2.json();
 					assistantText = data2?.choices?.[0]?.message?.content ?? "";
+				} catch (err: any) {
+					console.log("Fallback API call failed:", err.message);
+					if (err.name === 'AbortError') {
+						this._postMessage({ command: "chat:error", payload: { message: "Request timed out. The model is taking too long to respond. Please try again with a shorter request." } });
+					} else {
+						this._postMessage({ command: "chat:error", payload: { message: `Error: ${err.message}` } });
+					}
 				} finally {
 					clearTimeout(t2);
 				}
@@ -166,7 +174,10 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 
 			this._postMessage({ command: "chat:assistant", payload: { text: assistantText ?? "" } });
 		} catch (err: any) {
-			const message = err?.message ?? String(err);
+			let message = err?.message ?? String(err);
+			if (err.name === 'AbortError') {
+				message = "Request timed out. The model is taking too long to respond. Please try again with a shorter request.";
+			}
 			this._postMessage({ command: "chat:error", payload: { message } });
 		}
 		finally {
@@ -627,7 +638,7 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		await aiTerminalProvider.askWithIntent("Generate a cocotb testbench for the following RTL code", selectedText);
+		await aiTerminalProvider.askWithIntent("Write a Python test using cocotb for this RTL module", selectedText);
 	});
 
 	function registerSelectionIntent(command: string, intentLabel: string) {
@@ -661,7 +672,7 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	const cocotbCmd = registerSelectionIntent(
 		"chipAssistant.cocotbTestSelection",
-		"Generate a cocotb testbench for the following RTL code",
+		"Write a Python test using cocotb for this RTL module",
 	);
 
 	// OpenROAD: Show Results Panel

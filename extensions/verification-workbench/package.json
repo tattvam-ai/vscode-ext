@@ -112,8 +112,8 @@
 				},
 				"chipAssistant.request.timeoutMs": {
 					"type": "number",
-					"default": 60000,
-					"description": "Request timeout in milliseconds"
+					"default": 180000,
+					"description": "Request timeout in milliseconds (default: 3 minutes)"
 				},
 				"chipAssistant.showEffectivePrompt": {
 					"type": "boolean",
