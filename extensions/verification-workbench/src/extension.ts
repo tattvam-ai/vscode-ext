@@ -657,6 +657,12 @@ export function activate(context: vscode.ExtensionContext) {
 		await runner.installGtkwave();
 	});
 
+	// Cocotb: View Waveforms
+	const viewWaveforms = vscode.commands.registerCommand("cocotb.viewWaveforms", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.viewWaveforms();
+	});
+
 	// Cocotb: Debug Simulator Detection
 	const debugSimulatorDetection = vscode.commands.registerCommand("cocotb.debugSimulatorDetection", async () => {
 		const runner = CocotbRunner.getInstance();
@@ -738,6 +744,7 @@ export function activate(context: vscode.ExtensionContext) {
 		installCocotb,
 		installSimulator,
 		installGtkwave,
+		viewWaveforms,
 		debugSimulatorDetection,
 		generateCocotbTestbench,
 		explainCmd,

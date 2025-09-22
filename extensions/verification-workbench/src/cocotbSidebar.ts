@@ -83,6 +83,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 						this._postMessage({ command: "installResult", payload: { component: "gtkwave", success } });
 						break;
 					}
+					case "viewWaveforms": {
+						await this._runner.viewWaveforms();
+						break;
+					}
 				}
 			},
 			undefined,
@@ -296,6 +300,7 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		<button id="runBtn" class="button">▶️ Run Tests</button>
 		<button id="stopBtn" class="button" disabled>⏹️ Stop Tests</button>
 		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
+		<button id="viewWaveformsBtn" class="button">🌊 View Waveforms</button>
 	</div>
 
 	<div class="section">
@@ -388,6 +393,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 
 		document.getElementById('cleanBtn').addEventListener('click', () => {
 			vscode.postMessage({ command: 'cleanTests' });
+		});
+
+		document.getElementById('viewWaveformsBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'viewWaveforms' });
 		});
 
 		document.getElementById('checkBtn').addEventListener('click', () => {

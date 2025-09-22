@@ -292,6 +292,9 @@ MODULE = ${testBasename}
 # Use icarus (Icarus Verilog) as default simulator
 SIM = icarus
 
+# Enable waveform dumping for Icarus Verilog
+WAVES = 1
+
 # Include cocotb makefile
 include \$(shell cocotb-config --makefiles)/Makefile.sim
 
@@ -946,6 +949,134 @@ PYTHONPATH = .
 			vscode.window.showErrorMessage(`Error installing GTKWave: ${error.message}`);
 			return false;
 		}
+	}
+
+	public async viewWaveforms(): Promise<void> {
+		this.outputChannel.clear();
+		this.outputChannel.show();
+		this.outputChannel.appendLine("🌊 Opening GTKWave for waveform viewing...");
+
+		try {
+			// First check if GTKWave is available
+			const gtkwaveCheck = await this.runCommand("gtkwave", ["--version"]);
+			if (!gtkwaveCheck.success) {
+				vscode.window.showErrorMessage("GTKWave is not installed. Please install it first using 'Check Prerequisites'.");
+				this.outputChannel.appendLine("❌ GTKWave not found. Please install GTKWave first.");
+				return;
+			}
+
+			// Get test directory
+			const cfg = vscode.workspace.getConfiguration();
+			const testDir = cfg.get<string>("cocotb.testDirectory", "");
+			const testPath = vscode.window.activeTextEditor?.document.uri.fsPath;
+
+			let targetDir = await this.getTestDirectory(testDir, testPath);
+			if (!targetDir) {
+				return; // User cancelled
+			}
+
+			this.outputChannel.appendLine(`Looking for VCD files in: ${targetDir}`);
+
+			// Find VCD files in the test directory
+			const vcdFiles = await this.findVcdFiles(targetDir);
+
+			if (vcdFiles.length === 0) {
+				vscode.window.showWarningMessage("No VCD files found. Run tests first to generate waveform data.");
+				this.outputChannel.appendLine("❌ No VCD files found. Run tests first to generate waveform data.");
+				return;
+			}
+
+			let selectedVcdFile: string;
+
+			if (vcdFiles.length === 1) {
+				// Only one VCD file, use it directly
+				selectedVcdFile = vcdFiles[0];
+				this.outputChannel.appendLine(`Found VCD file: ${path.basename(selectedVcdFile)}`);
+			} else {
+				// Multiple VCD files, let user choose
+				const items = vcdFiles.map(file => ({
+					label: path.basename(file),
+					description: file,
+					detail: `Modified: ${fs.statSync(file).mtime.toLocaleString()}`
+				}));
+
+				const selected = await vscode.window.showQuickPick(items, {
+					placeHolder: "Select VCD file to view:",
+					ignoreFocusOut: true
+				});
+
+				if (!selected) {
+					return; // User cancelled
+				}
+
+				selectedVcdFile = selected.description;
+				this.outputChannel.appendLine(`Selected VCD file: ${path.basename(selectedVcdFile)}`);
+			}
+
+			// Launch GTKWave with the selected VCD file
+			this.outputChannel.appendLine(`Launching GTKWave: gtkwave ${selectedVcdFile}`);
+
+			// Use spawn to launch GTKWave in the background
+			const gtkwaveProcess = spawn("gtkwave", [selectedVcdFile], {
+				cwd: targetDir,
+				stdio: ["ignore", "pipe", "pipe"],
+				detached: true // Run in background
+			});
+
+			// Don't wait for GTKWave to close, but log any immediate errors
+			gtkwaveProcess.on("error", (error: Error) => {
+				this.outputChannel.appendLine(`❌ Error launching GTKWave: ${error.message}`);
+				vscode.window.showErrorMessage(`Failed to launch GTKWave: ${error.message}`);
+			});
+
+			// Log successful launch after a brief delay
+			setTimeout(() => {
+				if (gtkwaveProcess && !gtkwaveProcess.killed) {
+					this.outputChannel.appendLine("✅ GTKWave launched successfully!");
+					vscode.window.showInformationMessage(`GTKWave opened with ${path.basename(selectedVcdFile)}`);
+				}
+			}, 1000);
+
+			// Detach the process so it runs independently
+			gtkwaveProcess.unref();
+
+		} catch (error: any) {
+			this.outputChannel.appendLine(`❌ Error opening waveforms: ${error.message}`);
+			vscode.window.showErrorMessage(`Error opening waveforms: ${error.message}`);
+		}
+	}
+
+	private async findVcdFiles(directory: string): Promise<string[]> {
+		const vcdFiles: string[] = [];
+
+		try {
+			const entries = fs.readdirSync(directory, { withFileTypes: true });
+
+			for (const entry of entries) {
+				if (entry.isFile() && entry.name.endsWith('.vcd')) {
+					vcdFiles.push(path.join(directory, entry.name));
+				} else if (entry.isDirectory()) {
+					// Also check common subdirectories where VCD files might be
+					const subdirPath = path.join(directory, entry.name);
+					if (['sim_build', 'results', 'output', 'waveforms'].includes(entry.name)) {
+						const subFiles = await this.findVcdFiles(subdirPath);
+						vcdFiles.push(...subFiles);
+					}
+				}
+			}
+
+			// Sort by modification time (newest first)
+			vcdFiles.sort((a, b) => {
+				const aStat = fs.statSync(a);
+				const bStat = fs.statSync(b);
+				return bStat.mtime.getTime() - aStat.mtime.getTime();
+			});
+
+		} catch (error) {
+			// Ignore errors (directory might not exist, permission issues, etc.)
+		}
+
+		return vcdFiles;
 	}
 
 	private showGtkwaveManualInstallInstructions(): void {

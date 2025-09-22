@@ -51,6 +51,7 @@
 			{ "command": "cocotb.installCocotb", "title": "Cocotb: Install Cocotb" },
 			{ "command": "cocotb.installSimulator", "title": "Cocotb: Install Simulator" },
 			{ "command": "cocotb.installGtkwave", "title": "Cocotb: Install GTKWave" },
+			{ "command": "cocotb.viewWaveforms", "title": "Cocotb: View Waveforms" },
 			{ "command": "cocotb.debugSimulatorDetection", "title": "Cocotb: Debug Simulator Detection" },
 			{ "command": "cocotb.generateTestbench", "title": "Cocotb: Generate Testbench" }
 		],
@@ -210,6 +211,7 @@
 				{ "command": "cocotb.installCocotb" },
 				{ "command": "cocotb.installSimulator" },
 				{ "command": "cocotb.installGtkwave" },
+				{ "command": "cocotb.viewWaveforms" },
 				{ "command": "cocotb.debugSimulatorDetection" },
 				{ "command": "cocotb.generateTestbench" }
 			],
