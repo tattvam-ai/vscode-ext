@@ -36,6 +36,8 @@ import { OpenroadRunner } from "./openroadRunner";
 import { OpenroadSidebar } from "./openroadSidebar";
 import { CocotbRunner } from "./cocotbRunner";
 import { CocotbSidebar } from "./cocotbSidebar";
+import { VerilatorRunner } from "./verilatorRunner";
+import { VerilatorSidebar } from "./verilatorSidebar";
 // import { OpenroadResultsSidebar } from "./openroadResultsSidebar";
 
 // Simple Chip Assistant Provider
@@ -451,6 +453,15 @@ export function activate(context: vscode.ExtensionContext) {
 		),
 	);
 
+	// Verilator sidebar
+	const verilatorSidebarProvider = VerilatorSidebar.getInstance();
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(
+			VerilatorSidebar.viewType,
+			verilatorSidebarProvider,
+		),
+	);
+
 	// Results sidebar removed
 	// const resultsSidebarProvider = new OpenroadResultsSidebar(context.extensionUri);
 	// context.subscriptions.push(
@@ -550,52 +561,25 @@ export function activate(context: vscode.ExtensionContext) {
 	// Cocotb: Generate Makefile
 	const generateCocotbMakefile = vscode.commands.registerCommand("cocotb.generateMakefile", async () => {
 		const runner = CocotbRunner.getInstance();
-
-		// Step 1: Get test directory (where Makefile will be created)
-		const cfg = vscode.workspace.getConfiguration();
-		const configuredTestDir = cfg.get<string>("cocotb.testDirectory", "");
-		const activeFilePath = vscode.window.activeTextEditor?.document.uri.fsPath;
-
-		// Use the same logic as runTests for consistency
-		const testDirectory = await runner.getTestDirectoryPublic(configuredTestDir, activeFilePath);
-		if (!testDirectory) {
-			return; // User cancelled
+		const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+		if (!workspaceFolder) {
+			vscode.window.showErrorMessage("No workspace folder open");
+			return;
 		}
 
-		// Step 2: Get design and test files
 		const designFile = await vscode.window.showInputBox({
-			prompt: "Enter design file path (relative to test directory or absolute)",
+			prompt: "Enter design file path (e.g., design.v)",
 			placeHolder: "design.v"
 		});
 		if (!designFile) return;
 
 		const testFile = await vscode.window.showInputBox({
-			prompt: "Enter test file path (relative to test directory or absolute)",
+			prompt: "Enter test file path (e.g., test_design.py)",
 			placeHolder: "test_design.py"
 		});
 		if (!testFile) return;
 
-		await runner.generateMakefile(testDirectory, designFile, testFile);
-	});
-
-	// Cocotb: Set Test Directory
-	const setCocotbTestDirectory = vscode.commands.registerCommand("cocotb.setTestDirectory", async () => {
-		const selectedDir = await vscode.window.showOpenDialog({
-			canSelectFiles: false,
-			canSelectFolders: true,
-			canSelectMany: false,
-			openLabel: "Select Test Directory (where Makefile is/will be)"
-		});
-
-		if (selectedDir && selectedDir[0]) {
-			const dirPath = selectedDir[0].fsPath;
-			await vscode.workspace.getConfiguration().update(
-				'cocotb.testDirectory',
-				dirPath,
-				vscode.ConfigurationTarget.Workspace
-			);
-			vscode.window.showInformationMessage(`Test directory set to: ${dirPath}`);
-		}
+		await runner.generateMakefile(workspaceFolder.uri.fsPath, designFile, testFile);
 	});
 
 	// Cocotb: Check Prerequisites
@@ -606,10 +590,9 @@ export function activate(context: vscode.ExtensionContext) {
 		let message = "Cocotb Prerequisites Check:\n";
 		message += `Python: ${results.python ? "✓ OK" : "✗ Missing"}\n`;
 		message += `Cocotb: ${results.cocotb ? "✓ OK" : "✗ Missing"}\n`;
-		message += `Simulator: ${results.simulator ? "✓ OK" : "✗ Missing"}\n`;
-		message += `GTKWave: ${results.gtkwave ? "✓ OK" : "✗ Missing"}`;
+		message += `Simulator: ${results.simulator ? "✓ OK" : "✗ Missing"}`;
 
-		if (results.python && results.cocotb && results.simulator && results.gtkwave) {
+		if (results.python && results.cocotb && results.simulator) {
 			vscode.window.showInformationMessage(message);
 		} else {
 			// Offer to install missing components
@@ -620,9 +603,6 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!results.simulator) {
 				actions.push("Install Simulator");
 			}
-			if (!results.gtkwave) {
-				actions.push("Install GTKWave");
-			}
 
 			if (actions.length > 0) {
 				const choice = await vscode.window.showWarningMessage(message, ...actions);
@@ -630,8 +610,6 @@ export function activate(context: vscode.ExtensionContext) {
 					await runner.installCocotb();
 				} else if (choice === "Install Simulator") {
 					await runner.installSimulator();
-				} else if (choice === "Install GTKWave") {
-					await runner.installGtkwave();
 				}
 			} else {
 				vscode.window.showWarningMessage(message);
@@ -649,18 +627,6 @@ export function activate(context: vscode.ExtensionContext) {
 	const installSimulator = vscode.commands.registerCommand("cocotb.installSimulator", async () => {
 		const runner = CocotbRunner.getInstance();
 		await runner.installSimulator();
-	});
-
-	// Cocotb: Install GTKWave
-	const installGtkwave = vscode.commands.registerCommand("cocotb.installGtkwave", async () => {
-		const runner = CocotbRunner.getInstance();
-		await runner.installGtkwave();
-	});
-
-	// Cocotb: View Waveforms
-	const viewWaveforms = vscode.commands.registerCommand("cocotb.viewWaveforms", async () => {
-		const runner = CocotbRunner.getInstance();
-		await runner.viewWaveforms();
 	});
 
 	// Cocotb: Debug Simulator Detection
@@ -739,12 +705,9 @@ export function activate(context: vscode.ExtensionContext) {
 		stopCocotbTests,
 		cleanCocotbTests,
 		generateCocotbMakefile,
-		setCocotbTestDirectory,
 		checkCocotbPrerequisites,
 		installCocotb,
 		installSimulator,
-		installGtkwave,
-		viewWaveforms,
 		debugSimulatorDetection,
 		generateCocotbTestbench,
 		explainCmd,
@@ -752,6 +715,34 @@ export function activate(context: vscode.ExtensionContext) {
 		svaCmd,
 		optCmd,
 		cocotbCmd,
+	);
+
+	// Verilator commands
+	context.subscriptions.push(
+		vscode.commands.registerCommand("verilator.checkPrerequisites", async () => {
+			const r = VerilatorRunner.getInstance();
+			await r.checkPrerequisites();
+		}),
+		vscode.commands.registerCommand("verilator.compile", async () => {
+			const r = VerilatorRunner.getInstance();
+			await r.compile();
+		}),
+		vscode.commands.registerCommand("verilator.runSimulation", async () => {
+			const r = VerilatorRunner.getInstance();
+			await r.runSimulation();
+		}),
+		vscode.commands.registerCommand("verilator.stopSimulation", async () => {
+			const r = VerilatorRunner.getInstance();
+			await r.stopSimulation();
+		}),
+		vscode.commands.registerCommand("verilator.clean", async () => {
+			const r = VerilatorRunner.getInstance();
+			await r.clean();
+		}),
+		vscode.commands.registerCommand("verilator.setTestDirectory", async () => {
+			const r = VerilatorRunner.getInstance();
+			await r.setTestDirectory();
+		}),
 	);
 
 	// Register inline CodeLens for selection intents

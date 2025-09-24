@@ -46,14 +46,17 @@
 			{ "command": "cocotb.stopTests", "title": "Cocotb: Stop Tests" },
 			{ "command": "cocotb.cleanTests", "title": "Cocotb: Clean Tests" },
 			{ "command": "cocotb.generateMakefile", "title": "Cocotb: Generate Makefile" },
-			{ "command": "cocotb.setTestDirectory", "title": "Cocotb: Set Test Directory" },
 			{ "command": "cocotb.checkPrerequisites", "title": "Cocotb: Check Prerequisites" },
 			{ "command": "cocotb.installCocotb", "title": "Cocotb: Install Cocotb" },
 			{ "command": "cocotb.installSimulator", "title": "Cocotb: Install Simulator" },
-			{ "command": "cocotb.installGtkwave", "title": "Cocotb: Install GTKWave" },
-			{ "command": "cocotb.viewWaveforms", "title": "Cocotb: View Waveforms" },
 			{ "command": "cocotb.debugSimulatorDetection", "title": "Cocotb: Debug Simulator Detection" },
-			{ "command": "cocotb.generateTestbench", "title": "Cocotb: Generate Testbench" }
+			{ "command": "cocotb.generateTestbench", "title": "Cocotb: Generate Testbench" },
+			{ "command": "verilator.checkPrerequisites", "title": "Verilator: Check Prerequisites" },
+			{ "command": "verilator.compile", "title": "Verilator: Compile" },
+			{ "command": "verilator.runSimulation", "title": "Verilator: Run Simulation" },
+			{ "command": "verilator.stopSimulation", "title": "Verilator: Stop Simulation" },
+			{ "command": "verilator.clean", "title": "Verilator: Clean" },
+			{ "command": "verilator.setTestDirectory", "title": "Verilator: Set Test Directory" }
 		],
 		"viewsContainers": {
 			"activitybar": [
@@ -63,14 +66,19 @@
 					"icon": "$(robot)"
 				},
 				{
-					"id": "openroadContainer",
-					"title": "OpenROAD",
-					"icon": "$(tools)"
-				},
-				{
 					"id": "cocotbContainer",
 					"title": "Cocotb",
 					"icon": "$(beaker)"
+				},
+				{
+					"id": "verilatorContainer",
+					"title": "Verilator",
+					"icon": "$(gear)"
+				},
+				{
+					"id": "openroadContainer",
+					"title": "OpenROAD",
+					"icon": "$(tools)"
 				}
 			]
 		},
@@ -98,6 +106,14 @@
 					"type": "webview",
 					"when": "true"
 				}
+			],
+			"verilatorContainer": [
+				{
+					"id": "verilatorSidebar",
+					"name": "Verilator",
+					"type": "webview",
+					"when": "true"
+				}
 			]
 		},
 		"configuration": {
@@ -115,8 +131,8 @@
 				},
 				"chipAssistant.request.timeoutMs": {
 					"type": "number",
-					"default": 180000,
-					"description": "Request timeout in milliseconds (default: 3 minutes)"
+					"default": 60000,
+					"description": "Request timeout in milliseconds"
 				},
 				"chipAssistant.showEffectivePrompt": {
 					"type": "boolean",
@@ -183,12 +199,53 @@
 				"cocotb.testDirectory": {
 					"type": "string",
 					"default": "",
-					"description": "Primary test directory where Makefile is located and tests will run (auto-detected if empty)"
+					"description": "Directory containing cocotb tests (auto-detected if empty)"
 				},
 				"cocotb.autoSetup": {
 					"type": "boolean",
 					"default": true,
 					"description": "Automatically setup cocotb environment if not found"
+				},
+				"verilator.testDirectory": {
+					"type": "string",
+					"default": "",
+					"description": "Primary test directory where Verilator files are located (auto-detected if empty)"
+				},
+				"verilator.verilatorPath": {
+					"type": "string",
+					"default": "",
+					"description": "Path to Verilator executable (auto-detected if empty)"
+				},
+				"verilator.cppCompiler": {
+					"type": "string",
+					"default": "g++",
+					"description": "C++ compiler to use with Verilator (g++, clang++, etc.)"
+				},
+				"verilator.autoSetup": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically setup Verilator environment if not found"
+				},
+				"verilator.enableWall": {
+					"type": "boolean",
+					"default": true,
+					"description": "Pass -Wall to Verilator for extra warnings"
+				},
+				"verilator.jobs": {
+					"type": "number",
+					"default": 0,
+					"description": "Parallel build jobs for Verilator --build (-1 disables, 0 uses all cores, >0 sets exact jobs)"
+				}
+				,
+				"verilator.systemcInclude": {
+					"type": "string",
+					"default": "",
+					"description": "Override: path to SystemC include directory containing systemc.h"
+				},
+				"verilator.systemcLibdir": {
+					"type": "string",
+					"default": "",
+					"description": "Override: path to directory containing libsystemc.a or libsystemc.so"
 				}
 			}
 		},
@@ -206,14 +263,17 @@
 				{ "command": "cocotb.stopTests" },
 				{ "command": "cocotb.cleanTests" },
 				{ "command": "cocotb.generateMakefile" },
-				{ "command": "cocotb.setTestDirectory" },
 				{ "command": "cocotb.checkPrerequisites" },
 				{ "command": "cocotb.installCocotb" },
 				{ "command": "cocotb.installSimulator" },
-				{ "command": "cocotb.installGtkwave" },
-				{ "command": "cocotb.viewWaveforms" },
 				{ "command": "cocotb.debugSimulatorDetection" },
-				{ "command": "cocotb.generateTestbench" }
+				{ "command": "cocotb.generateTestbench" },
+				{ "command": "verilator.checkPrerequisites" },
+				{ "command": "verilator.compile" },
+				{ "command": "verilator.runSimulation" },
+				{ "command": "verilator.stopSimulation" },
+				{ "command": "verilator.clean" },
+				{ "command": "verilator.setTestDirectory" }
 			],
 			"editor/context": [
 				{ "command": "chipAssistant.explainSelection", "when": "editorHasSelection", "group": "chipAssistant@100" },

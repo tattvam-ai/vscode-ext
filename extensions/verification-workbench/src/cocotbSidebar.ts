@@ -7,18 +7,11 @@ import { CocotbRunner } from "./cocotbRunner";
 
 export class CocotbSidebar implements vscode.WebviewViewProvider {
 	public static readonly viewType = "cocotbSidebar";
-	private static _instance: CocotbSidebar | undefined;
-
 	private _view?: vscode.WebviewView;
 	private _runner: CocotbRunner;
 
 	constructor(private readonly _extensionUri: vscode.Uri) {
 		this._runner = CocotbRunner.getInstance();
-		CocotbSidebar._instance = this;
-	}
-
-	public static getInstance(): CocotbSidebar | undefined {
-		return CocotbSidebar._instance;
 	}
 
 	public resolveWebviewView(
@@ -66,25 +59,18 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 						this._postMessage({ command: "installResult", payload: { component: "simulator", success } });
 						break;
 					}
-					case "browseTestDirectory": {
-						await vscode.commands.executeCommand("cocotb.setTestDirectory");
-						// Update the display
-						const cfg = vscode.workspace.getConfiguration();
-						const testDir = cfg.get<string>("cocotb.testDirectory", "");
-						this._postMessage({ command: "updateTestDirectory", payload: testDir });
-						break;
-					}
 					case "generateMakefile": {
-						await vscode.commands.executeCommand("cocotb.generateMakefile");
+						const testDir = message.testDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+						const designFile = message.designFile;
+						const testFile = message.testFile;
+						if (testDir && designFile && testFile) {
+							await this._runner.generateMakefile(testDir, designFile, testFile);
+						}
 						break;
 					}
-					case "installGtkwave": {
-						const success = await this._runner.installGtkwave();
-						this._postMessage({ command: "installResult", payload: { component: "gtkwave", success } });
-						break;
-					}
-					case "viewWaveforms": {
-						await this._runner.viewWaveforms();
+					case "implementTests": {
+						// Trigger AI assistant to help implement tests
+						await vscode.commands.executeCommand("chipAssistant.implementCocotbTests");
 						break;
 					}
 				}
@@ -113,10 +99,6 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		if (this._view) {
 			this._view.webview.postMessage(msg);
 		}
-	}
-
-	public postStatus(status: 'running' | 'stopped' | 'cleaned') {
-		this._postMessage({ command: 'status', payload: status });
 	}
 
 	private _getHtmlForWebview(webview: vscode.Webview): string {
@@ -186,11 +168,6 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			border: 1px solid rgba(255, 255, 255, 0.3);
 			color: var(--vscode-foreground);
 		}
-		.status.cleaned {
-			background: linear-gradient(135deg, rgba(64, 255, 64, 0.2) 0%, rgba(0, 204, 102, 0.2) 100%);
-			border: 1px solid #40ff40;
-			color: #40ff40;
-		}
 		.prerequisites {
 			margin: 8px 0;
 			font-size: 12px;
@@ -199,36 +176,6 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			display: flex;
 			justify-content: space-between;
 			margin: 2px 0;
-		}
-
-		.config-item {
-			margin-bottom: 15px;
-		}
-
-		.config-item label {
-			display: block;
-			margin-bottom: 5px;
-			font-weight: bold;
-			color: #40ff40;
-		}
-
-		.path-display {
-			margin-top: 8px;
-			padding: 8px 10px;
-			background: #1e2a1e;
-			border: 1px solid #40ff40;
-			border-radius: 4px;
-			color: #ffffff;
-			font-size: 12px;
-			font-family: 'Courier New', monospace;
-			word-break: break-all;
-			border-left: 3px solid #40ff40;
-		}
-
-		.button.small {
-			padding: 6px 10px;
-			font-size: 11px;
-			min-width: auto;
 		}
 		.prerequisite.ok {
 			color: var(--vscode-testing-iconPassed);
@@ -260,18 +207,17 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 	<div class="header">Cocotb Test Manager</div>
 
 	<div class="section">
-		<div class="section-title">Test Directory</div>
-		<div class="config-item">
-			<label>Test Directory:</label>
-			<button id="browseBtn" class="button">📁 Browse</button>
-			<div id="testDirPath" class="path-display">Auto-detected or click Browse...</div>
-		</div>
-		<button id="generateMakefileBtn" class="button">📄 Generate Makefile</button>
+		<div class="section-title">Test Control</div>
+		<div id="status" class="status stopped">Tests stopped</div>
+		<button id="implementBtn" class="button">🤖 Implement Tests</button>
+		<button id="runBtn" class="button">▶️ Run Tests</button>
+		<button id="stopBtn" class="button" disabled>⏹️ Stop Tests</button>
+		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
 	</div>
 
 	<div class="section">
 		<div class="section-title">Setup</div>
-		<button id="checkBtn" class="button">🔍 Check Prerequisites</button>
+		<button id="checkBtn" class="button">Check Prerequisites</button>
 		<div id="prerequisites" class="prerequisites" style="display: none;">
 			<div class="prerequisite">
 				<span>Python:</span>
@@ -287,25 +233,14 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 				<span id="simulator-status">Unknown</span>
 				<button id="installSimulatorBtn" class="button" style="width: auto; margin-left: 8px; padding: 4px 8px; font-size: 11px;">Install</button>
 			</div>
-			<div class="prerequisite">
-				<span>GTKWave:</span>
-				<span id="gtkwave-status">Unknown</span>
-				<button id="installGtkwaveBtn" class="button" style="width: auto; margin-left: 8px; padding: 4px 8px; font-size: 11px;">Install</button>
-			</div>
 		</div>
 	</div>
 
 	<div class="section">
-		<div class="section-title">Testing</div>
-		<button id="runBtn" class="button">▶️ Run Tests</button>
-		<button id="stopBtn" class="button" disabled>⏹️ Stop Tests</button>
-		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
-		<button id="viewWaveformsBtn" class="button">🌊 View Waveforms</button>
-	</div>
-
-	<div class="section">
-		<div class="section-title">Status</div>
-		<div id="status" class="status stopped">Tests stopped</div>
+		<div class="section-title">Generate Makefile</div>
+		<input type="text" id="designFile" placeholder="Design file path (e.g., design.v)">
+		<input type="text" id="testFile" placeholder="Test file path (e.g., test_design.py)">
+		<button id="generateBtn" class="button">Generate Makefile</button>
 	</div>
 
 	<script>
@@ -313,44 +248,22 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 
 		let isRunning = false;
 
-		function updateStatus(status) {
+		function updateStatus(running) {
+			isRunning = running;
 			const statusEl = document.getElementById('status');
 			const runBtn = document.getElementById('runBtn');
 			const stopBtn = document.getElementById('stopBtn');
 
-			switch (status) {
-				case 'running':
-					isRunning = true;
-					statusEl.textContent = 'Tests running...';
-					statusEl.className = 'status running';
-					runBtn.disabled = true;
-					stopBtn.disabled = false;
-					break;
-				case 'stopped':
-					isRunning = false;
-					statusEl.textContent = 'Tests stopped';
-					statusEl.className = 'status stopped';
-					runBtn.disabled = false;
-					stopBtn.disabled = true;
-					break;
-				case 'cleaned':
-					isRunning = false;
-					statusEl.textContent = 'Tests cleaned';
-					statusEl.className = 'status cleaned';
-					runBtn.disabled = false;
-					stopBtn.disabled = true;
-					// Auto-revert to stopped after 3 seconds
-					setTimeout(() => {
-						updateStatus('stopped');
-					}, 3000);
-					break;
-				default:
-					// Handle legacy boolean input for backward compatibility
-					if (status === true) {
-						updateStatus('running');
-					} else if (status === false) {
-						updateStatus('stopped');
-					}
+			if (running) {
+				statusEl.textContent = 'Tests running...';
+				statusEl.className = 'status running';
+				runBtn.disabled = true;
+				stopBtn.disabled = false;
+			} else {
+				statusEl.textContent = 'Tests stopped';
+				statusEl.className = 'status stopped';
+				runBtn.disabled = false;
+				stopBtn.disabled = true;
 			}
 		}
 
@@ -365,24 +278,14 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			document.getElementById('simulator-status').textContent = results.simulator ? '✓ OK' : '✗ Missing';
 			document.getElementById('simulator-status').className = results.simulator ? 'prerequisite ok' : 'prerequisite error';
 
-			document.getElementById('gtkwave-status').textContent = results.gtkwave ? '✓ OK' : '✗ Missing';
-			document.getElementById('gtkwave-status').className = results.gtkwave ? 'prerequisite ok' : 'prerequisite error';
-
 			prereqEl.style.display = 'block';
 		}
 
 		// Event listeners
-
-		// Configuration
-		document.getElementById('browseBtn').addEventListener('click', () => {
-			vscode.postMessage({ command: 'browseTestDirectory' });
+		document.getElementById('implementBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'implementTests' });
 		});
 
-		document.getElementById('generateMakefileBtn').addEventListener('click', () => {
-			vscode.postMessage({ command: 'generateMakefile' });
-		});
-
-		// Test execution
 		document.getElementById('runBtn').addEventListener('click', () => {
 			vscode.postMessage({ command: 'runTests' });
 		});
@@ -393,10 +296,6 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 
 		document.getElementById('cleanBtn').addEventListener('click', () => {
 			vscode.postMessage({ command: 'cleanTests' });
-		});
-
-		document.getElementById('viewWaveformsBtn').addEventListener('click', () => {
-			vscode.postMessage({ command: 'viewWaveforms' });
 		});
 
 		document.getElementById('checkBtn').addEventListener('click', () => {
@@ -411,37 +310,29 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 			vscode.postMessage({ command: 'installSimulator' });
 		});
 
-		document.getElementById('installGtkwaveBtn').addEventListener('click', () => {
-			vscode.postMessage({ command: 'installGtkwave' });
+		document.getElementById('generateBtn').addEventListener('click', () => {
+			const designFile = document.getElementById('designFile').value;
+			const testFile = document.getElementById('testFile').value;
+			if (designFile && testFile) {
+				vscode.postMessage({
+					command: 'generateMakefile',
+					designFile: designFile,
+					testFile: testFile
+				});
+			} else {
+				vscode.window.showErrorMessage('Please provide both design file and test file paths');
+			}
 		});
-
-
-		// Update test directory display
-		function updateTestDirectory(testDir) {
-			const testDirDisplay = document.getElementById('testDirPath');
-			testDirDisplay.textContent = testDir || 'Auto-detected or click Browse...';
-		}
-
-		// Initialize test directory display
-		updateTestDirectory('${vscode.workspace.getConfiguration().get<string>("cocotb.testDirectory", "")}');
 
 		// Handle messages from extension
 		window.addEventListener('message', event => {
 			const message = event.data;
 			switch (message.command) {
 				case 'status':
-					// Handle both legacy format (boolean) and new format (string)
-					if (typeof message.payload === 'string') {
-						updateStatus(message.payload);
-					} else if (message.payload.running !== undefined) {
-						updateStatus(message.payload.running ? 'running' : 'stopped');
-					}
+					updateStatus(message.payload.running);
 					break;
 				case 'prerequisites':
 					updatePrerequisites(message.payload);
-					break;
-				case 'updateTestDirectory':
-					updateTestDirectory(message.payload);
 					break;
 				case 'installResult':
 					// Refresh prerequisites after installation
