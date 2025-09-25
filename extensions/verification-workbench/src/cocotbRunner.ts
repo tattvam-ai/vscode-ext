@@ -146,8 +146,29 @@ export class CocotbRunner implements vscode.Disposable {
 			env.SIM = simulator;
 		}
 
+		// Check for virtual environment and activate it
+		const discoveredVenv = await this.findVirtualEnvironment(targetDir);
+		let command = "make";
+		let args: string[] = [];
+
+		if (discoveredVenv && !process.env.VIRTUAL_ENV) {
+			// Found a virtual environment that's not currently active
+			this.outputChannel.appendLine(`🔄 Activating virtual environment: ${discoveredVenv}`);
+
+			// Set up environment variables for the virtual environment
+			env.VIRTUAL_ENV = discoveredVenv;
+			env.PATH = `${path.join(discoveredVenv, 'bin')}:${env.PATH}`;
+
+			// Use bash to activate the virtual environment and run make
+			command = "bash";
+			args = ["-c", `source ${path.join(discoveredVenv, 'bin', 'activate')} && make sim`];
+		} else {
+			// Use make directly (either no venv found or already active)
+			args = ["sim"];
+		}
+
 		// Start process
-		this.process = spawn("make", [], {
+		this.process = spawn(command, args, {
 			cwd: targetDir,
 			stdio: ["ignore", "pipe", "pipe"],
 			env: env
@@ -241,7 +262,28 @@ export class CocotbRunner implements vscode.Disposable {
 			env.SIM = simulator;
 		}
 
-		this.process = spawn("make", ["clean"], {
+		// Check for virtual environment and activate it
+		const discoveredVenv = await this.findVirtualEnvironment(targetDir);
+		let command = "make";
+		let args: string[] = [];
+
+		if (discoveredVenv && !process.env.VIRTUAL_ENV) {
+			// Found a virtual environment that's not currently active
+			this.outputChannel.appendLine(`🔄 Activating virtual environment for clean: ${discoveredVenv}`);
+
+			// Set up environment variables for the virtual environment
+			env.VIRTUAL_ENV = discoveredVenv;
+			env.PATH = `${path.join(discoveredVenv, 'bin')}:${env.PATH}`;
+
+			// Use bash to activate the virtual environment and run make clean
+			command = "bash";
+			args = ["-c", `source ${path.join(discoveredVenv, 'bin', 'activate')} && make clean`];
+		} else {
+			// Use make directly (either no venv found or already active)
+			args = ["clean"];
+		}
+
+		this.process = spawn(command, args, {
 			cwd: targetDir,
 			stdio: ["ignore", "pipe", "pipe"],
 			env: env
@@ -320,7 +362,7 @@ PYTHONPATH = .
 		this.outputChannel.appendLine(`PATH: ${process.env.PATH?.substring(0, 200)}...`);
 		this.outputChannel.appendLine("");
 
-		// Check cocotb in priority order: manual config > active venv > system-wide
+		// Check cocotb in priority order: manual config > active venv > discovered venv > system-wide
 		const cfg = vscode.workspace.getConfiguration();
 		const manualPythonPath = cfg.get<string>("cocotb.python.path", "");
 
@@ -337,9 +379,20 @@ PYTHONPATH = .
 			this.outputChannel.appendLine(`Virtual environment detected: ${process.env.VIRTUAL_ENV}`);
 			this.outputChannel.appendLine(`Will check: venv python, then system python`);
 		} else {
-			// No virtual environment - check system-wide
-			pythonToCheck = ["python3", "python"];
-			this.outputChannel.appendLine(`No virtual environment detected, checking system python`);
+			// Search for virtual environments in current directory and parents
+			const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+			const discoveredVenv = await this.findVirtualEnvironment(workspaceRoot);
+
+			if (discoveredVenv) {
+				const venvPython = path.join(discoveredVenv, "bin", "python");
+				pythonToCheck = [venvPython, "python3", "python"];
+				this.outputChannel.appendLine(`Discovered virtual environment: ${discoveredVenv}`);
+				this.outputChannel.appendLine(`Will check: discovered venv python, then system python`);
+			} else {
+				// No virtual environment - check system-wide
+				pythonToCheck = ["python3", "python"];
+				this.outputChannel.appendLine(`No virtual environment detected, checking system python`);
+			}
 		}
 
 		// Check each Python in order until we find one that works
@@ -440,6 +493,38 @@ PYTHONPATH = .
 		}
 
 		return results;
+	}
+
+	private async findVirtualEnvironment(startDir: string): Promise<string | null> {
+		// Common virtual environment directory names
+		const venvNames = ['.venv', 'venv', 'env', '.env', 'cocotb-env', '.cocotb-env'];
+
+		let currentDir = startDir;
+		const maxDepth = 5; // Prevent infinite loops
+		let depth = 0;
+
+		while (currentDir && depth < maxDepth) {
+			// Check for virtual environment directories in current directory
+			for (const venvName of venvNames) {
+				const venvPath = path.join(currentDir, venvName);
+				const pythonPath = path.join(venvPath, 'bin', 'python');
+
+				if (fs.existsSync(pythonPath)) {
+					this.outputChannel.appendLine(`🔍 Found virtual environment: ${venvPath}`);
+					return venvPath;
+				}
+			}
+
+			// Move to parent directory
+			const parentDir = path.dirname(currentDir);
+			if (parentDir === currentDir) {
+				break; // Reached root directory
+			}
+			currentDir = parentDir;
+			depth++;
+		}
+
+		return null;
 	}
 
 	private async findBestPython(): Promise<string> {
@@ -1098,6 +1183,15 @@ PYTHONPATH = .
 
 				await vscode.commands.executeCommand('workbench.view.explorer');
 				await vscode.commands.executeCommand('revealInExplorer', picked);
+			} catch { }
+
+			// Notify sidebar of path update
+			try {
+				const { CocotbSidebar } = require('./cocotbSidebar');
+				const sidebar = CocotbSidebar.getInstance();
+				if (sidebar) {
+					sidebar.postMessage({ command: 'pathUpdate', payload: { testDirectory: picked.fsPath } });
+				}
 			} catch { }
 		}
 	}

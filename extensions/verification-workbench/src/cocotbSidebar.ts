@@ -29,6 +29,13 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 
 		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+		// Initialize path display with current test directory
+		const cfg = vscode.workspace.getConfiguration();
+		const testDir = cfg.get<string>("cocotb.testDirectory", "");
+		if (testDir) {
+			this._postMessage({ command: 'pathUpdate', payload: { testDirectory: testDir } });
+		}
+
 		// Handle messages from webview
 		webviewView.webview.onDidReceiveMessage(
 			async (message) => {
@@ -200,6 +207,20 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		.prerequisite.error {
 			color: var(--vscode-testing-iconFailed);
 		}
+		.path-display {
+			margin-top: 8px;
+			padding: 8px 10px;
+			background: #1e2a1e;
+			border: 1px solid #40ff40;
+			border-radius: 4px;
+			color: #fff;
+			font-size: 12px;
+			font-family: 'Courier New', monospace;
+			border-left: 3px solid #40ff40;
+			word-break: break-all;
+			overflow-wrap: anywhere;
+			white-space: normal;
+		}
 		.section {
 			margin: 12px 0;
 		}
@@ -223,10 +244,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 <body>
 	<div class="header">Cocotb Test Manager</div>
 
-	<div class="section">
-		<div class="section-title">Test Directory</div>
-		<button id="browseBtn" class="button">📁 Browse Test Directory</button>
-		<div id="pathDisplay" style="margin-top: 4px; font-size: 11px; word-break: break-all; overflow-wrap: anywhere; white-space: normal;"></div>
+		<div class="section">
+			<div class="section-title">Test Directory</div>
+			<button id="browseBtn" class="button">📁 Browse Test Directory</button>
+			<div id="pathDisplay" class="path-display">Auto-detected or click Browse...</div>
 		<button id="runBtn" class="button" style="margin-top: 8px;">▶️ Run Tests</button>
 		<button id="stopBtn" class="button">⏹️ Stop Tests</button>
 		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
