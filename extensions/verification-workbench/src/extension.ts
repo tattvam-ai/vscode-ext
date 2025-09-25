@@ -30,6 +30,8 @@
 
 
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 import { fetch } from "undici";
 import { OpenroadConfigPanel } from "./openroadConfigPanel";
 import { OpenroadRunner } from "./openroadRunner";
@@ -44,6 +46,11 @@ import { VerilatorSidebar } from "./verilatorSidebar";
 class AITerminalProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = "aiTerminalView";
 	private _view?: vscode.WebviewView;
+
+	// Emit assistant responses so other commands can react (e.g., auto-save files)
+	private static _assistantEmitter = new vscode.EventEmitter<string>();
+	public static readonly onAssistantMessage: vscode.Event<string> = AITerminalProvider._assistantEmitter.event;
+	private static _lastAssistantText: string | undefined;
 
 	constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext) { }
 
@@ -175,6 +182,10 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			}
 
 			this._postMessage({ command: "chat:assistant", payload: { text: assistantText ?? "" } });
+			if (assistantText !== undefined) {
+				AITerminalProvider._lastAssistantText = assistantText;
+				AITerminalProvider._assistantEmitter.fire(assistantText);
+			}
 		} catch (err: any) {
 			let message = err?.message ?? String(err);
 			if (err.name === 'AbortError') {
@@ -560,27 +571,99 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Cocotb: Generate Makefile
 	const generateCocotbMakefile = vscode.commands.registerCommand("cocotb.generateMakefile", async () => {
-		const runner = CocotbRunner.getInstance();
-		const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-		if (!workspaceFolder) {
-			vscode.window.showErrorMessage("No workspace folder open");
-			return;
-		}
-
-		const designFile = await vscode.window.showInputBox({
-			prompt: "Enter design file path (e.g., design.v)",
-			placeHolder: "design.v"
-		});
+		const cfgDir = vscode.workspace.getConfiguration().get<string>("cocotb.testDirectory", "");
+		const baseDir = cfgDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
+		const designFile = await vscode.window.showInputBox({ prompt: "Enter design file path (relative or absolute)", placeHolder: "design.v" });
 		if (!designFile) return;
-
-		const testFile = await vscode.window.showInputBox({
-			prompt: "Enter test file path (e.g., test_design.py)",
-			placeHolder: "test_design.py"
-		});
+		const testFile = await vscode.window.showInputBox({ prompt: "Enter test file path (relative or absolute)", placeHolder: "test_design.py" });
 		if (!testFile) return;
-
-		await runner.generateMakefile(workspaceFolder.uri.fsPath, designFile, testFile);
+		await vscode.commands.executeCommand("chipAssistant.generateCocotbMakefile", { testDir: baseDir, designFile, testFile });
 	});
+
+	// Chip Assistant: Generate Cocotb Makefile with AI
+	const aiGenerateCocotbMakefile = vscode.commands.registerCommand("chipAssistant.generateCocotbMakefile", async (args?: { testDir?: string; designFile?: string; testFile?: string }) => {
+		const testDir = args?.testDir || vscode.workspace.getConfiguration().get<string>("cocotb.testDirectory", "") || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
+		const designFile = args?.designFile || "design.v";
+		const testFile = args?.testFile || "test_design.py";
+
+		// Normalize possible multi-file input (comma/space separated)
+		let designFiles = String(designFile).split(/[\s,]+/).filter(Boolean);
+		if ((!designFiles || designFiles.length === 0 || designFiles[0] === "design.v") && testDir) {
+			// Discover .v/.sv files in the selected Test Directory (depth 2)
+			designFiles = listVerilogFiles(testDir, 2).map(p => path.relative(testDir, p));
+		}
+		const designFilesPreview = designFiles.map(f => `$(shell pwd)/${f}`).join(" \\\n\t");
+		const testModule = path.basename(testFile, path.extname(testFile));
+		const defaultTop = path.basename(designFiles[0] || "top", path.extname(designFiles[0] || "top"));
+
+		const prompt = [
+			"Generate a Cocotb Makefile in the directory below. Follow these exact rules:",
+			"- TOPLEVEL_LANG ?= verilog (supports both .v and .sv)",
+			"- VERILOG_SOURCES = list of design files, each prefixed with $(shell pwd)/",
+			"  If multiple files: place each on its own line with a trailing backslash on all but the last line.",
+			"  If only one file: a single line with NO trailing backslash.",
+			"- COCOTB_TEST_MODULES = <basename of the Python test file (no .py)>",
+			"- COCOTB_TOPLEVEL = top module name (if unknown, use basename of the first design file)",
+			"- SIM = verilator",
+			"- WAVES = 1",
+			"- EXTRA_ARGS += --trace --trace-fst --trace-structs",
+			"- include $(shell cocotb-config --makefiles)/Makefile.sim",
+			"- TOPLEVEL_LANG, VERILOG_SOURCES, COCOTB_TEST_MODULES, COCOTB_TOPLEVEL, SIM, WAVES, EXTRA_ARGS, include must be present",
+			"",
+			`Directory: ${testDir}`,
+			"Design files (use these in VERILOG_SOURCES with $(shell pwd)/ prefix):",
+			designFiles.map(f => `- ${f}`).join("\n"),
+			`Test file: ${testFile}`,
+			`Computed values to use if needed: test module = ${testModule}, top default = ${defaultTop}`,
+			"",
+			"Return only the Makefile content in a single fenced code block."
+		].join("\n");
+
+		// Listen once for the next assistant message and auto-save
+		const disposable = AITerminalProvider.onAssistantMessage(async (text) => {
+			try {
+				const content = extractFirstCodeFence(text) || text;
+				if (!content || content.trim().length < 5) {
+					return; // no useful content
+				}
+				if (!testDir) return;
+				const outPath = path.join(testDir, "Makefile");
+				fs.writeFileSync(outPath, content, { encoding: "utf8" });
+				vscode.window.showInformationMessage(`Makefile saved to: ${outPath}`);
+				try { await vscode.commands.executeCommand('workbench.view.explorer'); } catch { }
+				try { await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(outPath)); } catch { }
+			} finally {
+				disposable.dispose();
+			}
+		});
+
+		await aiTerminalProvider.askWithIntent("Generate Cocotb Makefile", prompt);
+	});
+
+	function extractFirstCodeFence(text: string): string | null {
+		if (!text) return null;
+		const match = text.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
+		if (match && match[1]) {
+			return match[1].replace(/\r\n/g, "\n");
+		}
+		return null;
+	}
+
+	function listVerilogFiles(rootDir: string, maxDepth: number): string[] {
+		const results: string[] = [];
+		try {
+			const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+			for (const entry of entries) {
+				const full = path.join(rootDir, entry.name);
+				if (entry.isFile() && (entry.name.endsWith('.v') || entry.name.endsWith('.sv'))) {
+					results.push(full);
+				} else if (entry.isDirectory() && maxDepth > 0 && !['node_modules', '.git', '.vscode'].includes(entry.name)) {
+					results.push(...listVerilogFiles(full, maxDepth - 1));
+				}
+			}
+		} catch { }
+		return results;
+	}
 
 	// Cocotb: Set Test Directory (Browse)
 	const setCocotbTestDirectory = vscode.commands.registerCommand("cocotb.setTestDirectory", async () => {
@@ -726,6 +809,7 @@ export function activate(context: vscode.ExtensionContext) {
 		debugSimulatorDetection,
 		installGtkwave,
 		generateCocotbTestbench,
+		aiGenerateCocotbMakefile,
 		setCocotbTestDirectory,
 		explainCmd,
 		bugsCmd,

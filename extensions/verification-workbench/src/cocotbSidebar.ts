@@ -87,9 +87,7 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 						const testDir = cfgDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 						const designFile = message.designFile;
 						const testFile = message.testFile;
-						if (testDir && designFile && testFile) {
-							await this._runner.generateMakefile(testDir, designFile, testFile);
-						}
+						await vscode.commands.executeCommand("chipAssistant.generateCocotbMakefile", { testDir, designFile, testFile });
 						break;
 					}
 					case "implementTests": {
@@ -226,6 +224,7 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		<button id="browseBtn" class="button">📁 Browse Test Directory</button>
 		<div id="pathDisplay" style="margin-top: 4px; font-size: 11px; word-break: break-all; overflow-wrap: anywhere; white-space: normal;"></div>
 		<button id="runBtn" class="button" style="margin-top: 8px;">▶️ Run Tests</button>
+		<button id="stopBtn" class="button">⏹️ Stop Tests</button>
 		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
 		<button id="viewWaveformsBtn" class="button" style="margin-top: 8px;">🌊 View Waveforms</button>
 	</div>
@@ -299,6 +298,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		// Event listeners
 		document.getElementById('runBtn').addEventListener('click', () => {
 			vscode.postMessage({ command: 'runTests' });
+		});
+
+		document.getElementById('stopBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'stopTests' });
 		});
 
 		document.getElementById('cleanBtn').addEventListener('click', () => {
