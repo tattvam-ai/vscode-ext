@@ -582,6 +582,12 @@ export function activate(context: vscode.ExtensionContext) {
 		await runner.generateMakefile(workspaceFolder.uri.fsPath, designFile, testFile);
 	});
 
+	// Cocotb: Set Test Directory (Browse)
+	const setCocotbTestDirectory = vscode.commands.registerCommand("cocotb.setTestDirectory", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.setTestDirectory();
+	});
+
 	// Cocotb: Check Prerequisites
 	const checkCocotbPrerequisites = vscode.commands.registerCommand("cocotb.checkPrerequisites", async () => {
 		const runner = CocotbRunner.getInstance();
@@ -590,9 +596,11 @@ export function activate(context: vscode.ExtensionContext) {
 		let message = "Cocotb Prerequisites Check:\n";
 		message += `Python: ${results.python ? "✓ OK" : "✗ Missing"}\n`;
 		message += `Cocotb: ${results.cocotb ? "✓ OK" : "✗ Missing"}\n`;
-		message += `Simulator: ${results.simulator ? "✓ OK" : "✗ Missing"}`;
+		message += `Icarus (iverilog): ${results.icarus ? "✓ OK" : "✗ Missing"}\n`;
+		message += `Verilator: ${results.verilator ? "✓ OK" : "✗ Missing"}\n`;
+		message += `GTKWave: ${results.gtkwave ? "✓ OK" : "✗ Missing"}`;
 
-		if (results.python && results.cocotb && results.simulator) {
+		if (results.python && results.cocotb && results.icarus && results.gtkwave) {
 			vscode.window.showInformationMessage(message);
 		} else {
 			// Offer to install missing components
@@ -600,16 +608,17 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!results.cocotb) {
 				actions.push("Install Cocotb");
 			}
-			if (!results.simulator) {
-				actions.push("Install Simulator");
-			}
+			if (!results.icarus) actions.push("Install Icarus");
+			if (!results.gtkwave) actions.push("Install GTKWave");
 
 			if (actions.length > 0) {
 				const choice = await vscode.window.showWarningMessage(message, ...actions);
 				if (choice === "Install Cocotb") {
 					await runner.installCocotb();
-				} else if (choice === "Install Simulator") {
+				} else if (choice === "Install Icarus") {
 					await runner.installSimulator();
+				} else if (choice === "Install GTKWave") {
+					await runner.installGtkwave();
 				}
 			} else {
 				vscode.window.showWarningMessage(message);
@@ -627,6 +636,12 @@ export function activate(context: vscode.ExtensionContext) {
 	const installSimulator = vscode.commands.registerCommand("cocotb.installSimulator", async () => {
 		const runner = CocotbRunner.getInstance();
 		await runner.installSimulator();
+	});
+
+	// Cocotb: Install GTKWave
+	const installGtkwave = vscode.commands.registerCommand("cocotb.installGtkwave", async () => {
+		const runner = CocotbRunner.getInstance();
+		await runner.installGtkwave();
 	});
 
 	// Cocotb: Debug Simulator Detection
@@ -709,7 +724,9 @@ export function activate(context: vscode.ExtensionContext) {
 		installCocotb,
 		installSimulator,
 		debugSimulatorDetection,
+		installGtkwave,
 		generateCocotbTestbench,
+		setCocotbTestDirectory,
 		explainCmd,
 		bugsCmd,
 		svaCmd,

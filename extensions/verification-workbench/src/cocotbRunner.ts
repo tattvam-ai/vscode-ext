@@ -62,9 +62,9 @@ export class CocotbRunner implements vscode.Disposable {
 			}
 		}
 
-		if (!prerequisites.simulator) {
+		if (!prerequisites.icarus) {
 			const install = await vscode.window.showWarningMessage(
-				"Simulator (iverilog) is not installed. Would you like to install it automatically?",
+				"Icarus Verilog (iverilog) is not installed. Would you like to install it automatically?",
 				"Install Simulator",
 				"Cancel"
 			);
@@ -311,8 +311,8 @@ PYTHONPATH = .
 		vscode.window.showInformationMessage(`Generated Makefile at: ${makefilePath}`);
 	}
 
-	public async checkPrerequisites(): Promise<{ cocotb: boolean; simulator: boolean; python: boolean; gtkwave: boolean }> {
-		const results = { cocotb: false, simulator: false, python: false, gtkwave: false };
+	public async checkPrerequisites(): Promise<{ cocotb: boolean; icarus: boolean; verilator: boolean; python: boolean; gtkwave: boolean }> {
+		const results = { cocotb: false, icarus: false, verilator: false, python: false, gtkwave: false };
 
 		// Debug: Show environment info
 		this.outputChannel.appendLine("🔍 Environment Debug Info:");
@@ -381,47 +381,45 @@ PYTHONPATH = .
 		}
 
 		try {
-			// Check simulator (iverilog by default)
-			this.outputChannel.appendLine(`\nChecking simulator...`);
+			// Check Icarus Verilog (iverilog)
+			this.outputChannel.appendLine(`\nChecking Icarus (iverilog)...`);
 			const cfg = vscode.workspace.getConfiguration();
-			const simulator = cfg.get<string>("cocotb.simulator.type", "iverilog");
-			const simulatorPath = cfg.get<string>("cocotb.simulator.path", simulator);
+			const iverilogCmd = cfg.get<string>("cocotb.simulator.path", "iverilog") || "iverilog";
+			this.outputChannel.appendLine(`Testing: ${iverilogCmd} -v`);
+			let icarusResult = await this.runCommand(iverilogCmd, ["-v"]);
+			this.outputChannel.appendLine(`Result: success=${icarusResult.success}, output="${icarusResult.output}", error="${icarusResult.error}"`);
 
-			this.outputChannel.appendLine(`Simulator type: ${simulator}`);
-			this.outputChannel.appendLine(`Simulator path: ${simulatorPath}`);
-
-			// Try multiple ways to detect iverilog
-			this.outputChannel.appendLine(`Testing: ${simulatorPath} -v`);
-			let simulatorResult = await this.runCommand(simulatorPath, ["-v"]);
-			this.outputChannel.appendLine(`Result: success=${simulatorResult.success}, output="${simulatorResult.output}", error="${simulatorResult.error}"`);
-
-			if (!simulatorResult.success && simulator === "iverilog") {
-				// Try alternative names for iverilog
+			if (!icarusResult.success) {
 				this.outputChannel.appendLine(`Primary command failed, trying alternatives...`);
 				const alternativeNames = ["iverilog", "iverilog-gtk", "iverilog-vpi"];
 				for (const altName of alternativeNames) {
 					this.outputChannel.appendLine(`  Testing: ${altName} -v`);
-					simulatorResult = await this.runCommand(altName, ["-v"]);
-					this.outputChannel.appendLine(`  Result: success=${simulatorResult.success}, output="${simulatorResult.output}", error="${simulatorResult.error}"`);
-					if (simulatorResult.success) {
-						// Update the configuration to use the working command
-						this.outputChannel.appendLine(`  ✅ Found working simulator: ${altName}`);
+					icarusResult = await this.runCommand(altName, ["-v"]);
+					this.outputChannel.appendLine(`  Result: success=${icarusResult.success}, output="${icarusResult.output}", error="${icarusResult.error}"`);
+					if (icarusResult.success) {
+						this.outputChannel.appendLine(`  ✅ Found working iverilog: ${altName}`);
 						await cfg.update("cocotb.simulator.path", altName, vscode.ConfigurationTarget.Workspace);
 						break;
 					}
 				}
 			}
 
-			if (simulatorResult.success) {
-				this.outputChannel.appendLine(`✅ Simulator detected successfully`);
-			} else {
-				this.outputChannel.appendLine(`❌ Simulator detection failed`);
-			}
-
-			results.simulator = simulatorResult.success;
+			results.icarus = icarusResult.success;
+			this.outputChannel.appendLine(icarusResult.success ? `✅ Icarus detected successfully` : `❌ Icarus (iverilog) not found`);
 		} catch (err: any) {
-			this.outputChannel.appendLine(`❌ Simulator check exception: ${err.message}`);
-			results.simulator = false;
+			this.outputChannel.appendLine(`❌ Icarus check exception: ${err.message}`);
+			results.icarus = false;
+		}
+
+		// Check Verilator (optional for cocotb, but useful)
+		try {
+			this.outputChannel.appendLine(`\nChecking Verilator...`);
+			const verilatorResult = await this.runCommand("verilator", ["--version"]);
+			results.verilator = verilatorResult.success;
+			this.outputChannel.appendLine(verilatorResult.success ? `✅ Verilator detected` : `❌ Verilator not found`);
+		} catch (err: any) {
+			this.outputChannel.appendLine(`❌ Verilator check exception: ${err.message}`);
+			results.verilator = false;
 		}
 
 		// Check GTKWave
@@ -954,7 +952,7 @@ PYTHONPATH = .
 	public async viewWaveforms(): Promise<void> {
 		this.outputChannel.clear();
 		this.outputChannel.show();
-		this.outputChannel.appendLine("🌊 Opening GTKWave for waveform viewing...");
+		this.outputChannel.appendLine("🌊 Opening GTKWave GUI...");
 
 		try {
 			// First check if GTKWave is available
@@ -965,62 +963,13 @@ PYTHONPATH = .
 				return;
 			}
 
-			// Get test directory
-			const cfg = vscode.workspace.getConfiguration();
-			const testDir = cfg.get<string>("cocotb.testDirectory", "");
-			const testPath = vscode.window.activeTextEditor?.document.uri.fsPath;
 
-			let targetDir = await this.getTestDirectory(testDir, testPath);
-			if (!targetDir) {
-				return; // User cancelled
-			}
-
-			this.outputChannel.appendLine(`Looking for waveform files in: ${targetDir}`);
-
-			// Find waveform files in the test directory (prioritize .fst over .vcd)
-			const waveformFiles = await this.findWaveformFiles(targetDir);
-
-			if (waveformFiles.length === 0) {
-				vscode.window.showWarningMessage("No waveform files found. Run tests first to generate waveform data.");
-				this.outputChannel.appendLine("❌ No waveform files found. Run tests first to generate waveform data.");
-				return;
-			}
-
-			let selectedWaveformFile: string;
-
-			if (waveformFiles.length === 1) {
-				// Only one waveform file, use it directly
-				selectedWaveformFile = waveformFiles[0];
-				this.outputChannel.appendLine(`Found waveform file: ${path.basename(selectedWaveformFile)}`);
-			} else {
-				// Multiple waveform files, let user choose
-				const items = waveformFiles.map(file => ({
-					label: path.basename(file),
-					description: file,
-					detail: `Modified: ${fs.statSync(file).mtime.toLocaleString()}`
-				}));
-
-				const selected = await vscode.window.showQuickPick(items, {
-					placeHolder: "Select waveform file to view:",
-					ignoreFocusOut: true
-				});
-
-				if (!selected) {
-					return; // User cancelled
-				}
-
-				selectedWaveformFile = selected.description;
-				this.outputChannel.appendLine(`Selected waveform file: ${path.basename(selectedWaveformFile)}`);
-			}
-
-			// Launch GTKWave with the selected waveform file
-			this.outputChannel.appendLine(`Launching GTKWave: gtkwave ${selectedWaveformFile}`);
-
-			// Use spawn to launch GTKWave in the background
-			const gtkwaveProcess = spawn("gtkwave", [selectedWaveformFile], {
-				cwd: targetDir,
+			// Launch GTKWave GUI without loading files
+			this.outputChannel.appendLine(`Launching GTKWave: gtkwave`);
+			const gtkwaveProcess = spawn("gtkwave", [], {
+				cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
 				stdio: ["ignore", "pipe", "pipe"],
-				detached: true // Run in background
+				detached: true
 			});
 
 			// Don't wait for GTKWave to close, but log any immediate errors
@@ -1033,7 +982,7 @@ PYTHONPATH = .
 			setTimeout(() => {
 				if (gtkwaveProcess && !gtkwaveProcess.killed) {
 					this.outputChannel.appendLine("✅ GTKWave launched successfully!");
-					vscode.window.showInformationMessage(`GTKWave opened with ${path.basename(selectedWaveformFile)}`);
+					vscode.window.showInformationMessage("GTKWave opened.");
 				}
 			}, 1000);
 
@@ -1043,6 +992,66 @@ PYTHONPATH = .
 		} catch (error: any) {
 			this.outputChannel.appendLine(`❌ Error opening waveforms: ${error.message}`);
 			vscode.window.showErrorMessage(`Error opening waveforms: ${error.message}`);
+		}
+	}
+
+	public async setTestDirectory(): Promise<void> {
+		const options: vscode.OpenDialogOptions = { canSelectMany: false, openLabel: "Select Test Directory", canSelectFolders: true, canSelectFiles: false };
+		const folderUri = await vscode.window.showOpenDialog(options);
+		if (folderUri && folderUri[0]) {
+			const picked = folderUri[0];
+			const cfg = vscode.workspace.getConfiguration();
+			const hasWorkspace = Boolean(vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0);
+			await cfg.update(
+				"cocotb.testDirectory",
+				picked.fsPath,
+				hasWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global
+			);
+			vscode.window.showInformationMessage(
+				`Cocotb test directory set to: ${picked.fsPath}${hasWorkspace ? "" : " (saved in User Settings)"}`
+			);
+
+			// Ensure the selected folder is visible in the Explorer
+			try {
+				const folders = vscode.workspace.workspaceFolders;
+				if (!folders || folders.length === 0) {
+					// No workspace open: offer to open the folder so it shows in Explorer
+					const choice = await vscode.window.showInformationMessage(
+						"Open selected test directory in this window so it appears in the Explorer?",
+						"Open Folder",
+						"Cancel"
+					);
+					if (choice === "Open Folder") {
+						await vscode.commands.executeCommand('vscode.openFolder', picked, false);
+					}
+					return;
+				}
+
+				// We have a workspace open. Offer to either switch root or add to workspace
+				const currentIsSingleFolder = folders.length === 1;
+				const alreadyInWorkspace = folders.some(f => f.uri.fsPath === picked.fsPath);
+				if (!alreadyInWorkspace) {
+					let action: string | undefined;
+					if (currentIsSingleFolder) {
+						action = await vscode.window.showQuickPick([
+							"Open This Folder (switch window)",
+							"Add To Workspace"
+						], { placeHolder: "How should the selected test directory appear in Explorer?" });
+					} else {
+						action = "Add To Workspace";
+					}
+
+					if (action === "Open This Folder (switch window)") {
+						await vscode.commands.executeCommand('vscode.openFolder', picked, false);
+						return;
+					} else if (action === "Add To Workspace") {
+						vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: picked });
+					}
+				}
+
+				await vscode.commands.executeCommand('workbench.view.explorer');
+				await vscode.commands.executeCommand('revealInExplorer', picked);
+			} catch { }
 		}
 	}
 
