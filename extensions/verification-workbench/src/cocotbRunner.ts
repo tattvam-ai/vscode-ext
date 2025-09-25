@@ -1181,8 +1181,6 @@ PYTHONPATH = .
 					}
 				}
 
-				await vscode.commands.executeCommand('workbench.view.explorer');
-				await vscode.commands.executeCommand('revealInExplorer', picked);
 			} catch { }
 
 			// Notify sidebar of path update

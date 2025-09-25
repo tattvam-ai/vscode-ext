@@ -6,82 +6,82 @@ import * as vscode from "vscode";
 import { VerilatorRunner } from "./verilatorRunner";
 
 export class VerilatorSidebar implements vscode.WebviewViewProvider {
-	public static readonly viewType = "verilatorSidebar";
-	private static instance: VerilatorSidebar | undefined;
+  public static readonly viewType = "verilatorSidebar";
+  private static instance: VerilatorSidebar | undefined;
 
-	private _view?: vscode.WebviewView;
-	private _runner: VerilatorRunner;
+  private _view?: vscode.WebviewView;
+  private _runner: VerilatorRunner;
 
-	private constructor() {
-		this._runner = VerilatorRunner.getInstance();
-	}
+  private constructor() {
+    this._runner = VerilatorRunner.getInstance();
+  }
 
-	public static getInstance(): VerilatorSidebar {
-		if (!VerilatorSidebar.instance) {
-			VerilatorSidebar.instance = new VerilatorSidebar();
-		}
-		return VerilatorSidebar.instance;
-	}
+  public static getInstance(): VerilatorSidebar {
+    if (!VerilatorSidebar.instance) {
+      VerilatorSidebar.instance = new VerilatorSidebar();
+    }
+    return VerilatorSidebar.instance;
+  }
 
-	public resolveWebviewView(webviewView: vscode.WebviewView): void {
-		this._view = webviewView;
-		webviewView.webview.options = { enableScripts: true, localResourceRoots: [] };
-		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+  public resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this._view = webviewView;
+    webviewView.webview.options = { enableScripts: true, localResourceRoots: [] };
+    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-		webviewView.webview.onDidReceiveMessage(async (message) => {
-			switch (message.command) {
-				case "checkPrerequisites": {
-					const results = await this._runner.checkPrerequisites();
-					this._postMessage({ command: "prerequisites", payload: results });
-					break;
-				}
-				case "compile": await this._runner.compile(); break;
-				case "runSimulation": await this._runner.runSimulation(); break;
-				case "stopSimulation": await this._runner.stopSimulation(); break;
-				case "clean": await this._runner.clean(); break;
-				case "browseTestDirectory": {
-					await vscode.commands.executeCommand("verilator.setTestDirectory");
-					const cfg = vscode.workspace.getConfiguration();
-					const testDir = cfg.get<string>("verilator.testDirectory", "");
-					this._postMessage({ command: "updateTestDirectory", payload: testDir });
-					break;
-				}
-				case "installVerilator": await this._runner.installVerilator(); break;
-				case "installCpp": await this._runner.installCppCompiler(); break;
-				case "installMake": await this._runner.installMake(); break;
-				case "installSystemC": await this._runner.installSystemC(); break;
-				case "requestSettings": {
-					const cfg = vscode.workspace.getConfiguration();
-					const enableWall = cfg.get<boolean>("verilator.enableWall", true);
-					const jobs = cfg.get<number>("verilator.jobs", 0);
-					this._postMessage({ command: "settings", payload: { enableWall, jobs } });
-					break;
-				}
-				case "setEnableWall": {
-					const cfg = vscode.workspace.getConfiguration();
-					await cfg.update("verilator.enableWall", !!message.payload, vscode.ConfigurationTarget.Workspace);
-					break;
-				}
-				case "setJobs": {
-					const cfg = vscode.workspace.getConfiguration();
-					const val = Number(message.payload);
-					await cfg.update("verilator.jobs", isNaN(val) ? 0 : val, vscode.ConfigurationTarget.Workspace);
-					break;
-				}
-			}
-		});
+    webviewView.webview.onDidReceiveMessage(async (message) => {
+      switch (message.command) {
+        case "checkPrerequisites": {
+          const results = await this._runner.checkPrerequisites();
+          this._postMessage({ command: "prerequisites", payload: results });
+          break;
+        }
+        case "compile": await this._runner.compile(); break;
+        case "runSimulation": await this._runner.runSimulation(); break;
+        case "stopSimulation": await this._runner.stopSimulation(); break;
+        case "clean": await this._runner.clean(); break;
+        case "browseTestDirectory": {
+          await vscode.commands.executeCommand("verilator.setTestDirectory");
+          const cfg = vscode.workspace.getConfiguration();
+          const testDir = cfg.get<string>("verilator.testDirectory", "");
+          this._postMessage({ command: "updateTestDirectory", payload: testDir });
+          break;
+        }
+        case "installVerilator": await this._runner.installVerilator(); break;
+        case "installCpp": await this._runner.installCppCompiler(); break;
+        case "installMake": await this._runner.installMake(); break;
+        case "installSystemC": await this._runner.installSystemC(); break;
+        case "requestSettings": {
+          const cfg = vscode.workspace.getConfiguration();
+          const enableWall = cfg.get<boolean>("verilator.enableWall", true);
+          const jobs = cfg.get<number>("verilator.jobs", 0);
+          this._postMessage({ command: "settings", payload: { enableWall, jobs } });
+          break;
+        }
+        case "setEnableWall": {
+          const cfg = vscode.workspace.getConfiguration();
+          await cfg.update("verilator.enableWall", !!message.payload, vscode.ConfigurationTarget.Workspace);
+          break;
+        }
+        case "setJobs": {
+          const cfg = vscode.workspace.getConfiguration();
+          const val = Number(message.payload);
+          await cfg.update("verilator.jobs", isNaN(val) ? 0 : val, vscode.ConfigurationTarget.Workspace);
+          break;
+        }
+      }
+    });
 
-		// Initialize test directory display from current settings on first load
-		const cfg = vscode.workspace.getConfiguration();
-		const testDir = cfg.get<string>("verilator.testDirectory", "");
-		this._postMessage({ command: "updateTestDirectory", payload: testDir });
-	}
+    // Initialize test directory display from current settings on first load
+    const cfg = vscode.workspace.getConfiguration();
+    const testDir = cfg.get<string>("verilator.testDirectory", "");
+    this._postMessage({ command: "updateTestDirectory", payload: testDir });
+  }
 
-	private _postMessage(msg: any) { if (this._view) this._view.webview.postMessage(msg); }
-	public postStatus(status: 'running' | 'stopped' | 'cleaned') { this._postMessage({ command: 'status', payload: status }); }
+  private _postMessage(msg: any) { if (this._view) this._view.webview.postMessage(msg); }
+  public postStatus(status: 'running' | 'stopped' | 'cleaned') { this._postMessage({ command: 'status', payload: status }); }
 
-	private _getHtmlForWebview(webview: vscode.Webview): string {
-		return `<!DOCTYPE html>
+  private _getHtmlForWebview(webview: vscode.Webview): string {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -215,7 +215,7 @@ export class VerilatorSidebar implements vscode.WebviewViewProvider {
   </script>
 </body>
 </html>`;
-	}
+  }
 }
 
 
