@@ -952,7 +952,7 @@ PYTHONPATH = .
 	public async viewWaveforms(): Promise<void> {
 		this.outputChannel.clear();
 		this.outputChannel.show();
-		this.outputChannel.appendLine("🌊 Opening GTKWave GUI...");
+		this.outputChannel.appendLine("🌊 Opening latest waveform in GTKWave...");
 
 		try {
 			// First check if GTKWave is available
@@ -964,10 +964,27 @@ PYTHONPATH = .
 			}
 
 
-			// Launch GTKWave GUI without loading files
-			this.outputChannel.appendLine(`Launching GTKWave: gtkwave`);
-			const gtkwaveProcess = spawn("gtkwave", [], {
-				cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
+			// Get test directory
+			const cfg = vscode.workspace.getConfiguration();
+			const testDir = cfg.get<string>("cocotb.testDirectory", "");
+			const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
+			const targetDir = await this.getTestDirectory(testDir, activePath);
+			if (!targetDir) return;
+
+			this.outputChannel.appendLine(`Searching for waveform files in: ${targetDir}`);
+			const waveformFiles = await this.findWaveformFiles(targetDir);
+			let args: string[] = [];
+			if (waveformFiles.length > 0) {
+				const selected = waveformFiles[0];
+				this.outputChannel.appendLine(`Using waveform: ${selected}`);
+				args = [selected];
+			} else {
+				this.outputChannel.appendLine("No waveform files found. Opening GTKWave GUI only.");
+			}
+
+			this.outputChannel.appendLine(`Launching GTKWave: gtkwave ${args.join(" ")}`);
+			const gtkwaveProcess = spawn("gtkwave", args, {
+				cwd: targetDir,
 				stdio: ["ignore", "pipe", "pipe"],
 				detached: true
 			});
@@ -992,6 +1009,36 @@ PYTHONPATH = .
 		} catch (error: any) {
 			this.outputChannel.appendLine(`❌ Error opening waveforms: ${error.message}`);
 			vscode.window.showErrorMessage(`Error opening waveforms: ${error.message}`);
+		}
+	}
+
+	public async openGtkwaveGuiOnly(): Promise<void> {
+		this.outputChannel.clear();
+		this.outputChannel.show();
+		this.outputChannel.appendLine("🪟 Opening GTKWave GUI (no file)...");
+		try {
+			const gtkwaveCheck = await this.runCommand("gtkwave", ["--version"]);
+			if (!gtkwaveCheck.success) {
+				vscode.window.showErrorMessage("GTKWave is not installed. Please install it first using 'Check Prerequisites'.");
+				this.outputChannel.appendLine("❌ GTKWave not found. Please install GTKWave first.");
+				return;
+			}
+			const workdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+			const p = spawn("gtkwave", [], { cwd: workdir, stdio: ["ignore", "pipe", "pipe"], detached: true });
+			p.on("error", (error: Error) => {
+				this.outputChannel.appendLine(`❌ Error launching GTKWave: ${error.message}`);
+				vscode.window.showErrorMessage(`Failed to launch GTKWave: ${error.message}`);
+			});
+			setTimeout(() => {
+				if (p && !p.killed) {
+					this.outputChannel.appendLine("✅ GTKWave launched successfully!");
+					vscode.window.showInformationMessage("GTKWave opened.");
+				}
+			}, 1000);
+			p.unref();
+		} catch (e: any) {
+			this.outputChannel.appendLine(`❌ Error opening GTKWave: ${e?.message || e}`);
+			vscode.window.showErrorMessage(`Error opening GTKWave: ${e?.message || e}`);
 		}
 	}
 
@@ -1055,45 +1102,34 @@ PYTHONPATH = .
 		}
 	}
 
-	private async findWaveformFiles(directory: string): Promise<string[]> {
-		const waveformFiles: string[] = [];
-
-		try {
-			const entries = fs.readdirSync(directory, { withFileTypes: true });
-
+	private async findWaveformFiles(directory: string, maxDepth: number = 3): Promise<string[]> {
+		const results: string[] = [];
+		const visit = (dir: string, depth: number) => {
+			if (depth < 0) return;
+			let entries: fs.Dirent[] = [];
+			try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
 			for (const entry of entries) {
+				const full = path.join(dir, entry.name);
 				if (entry.isFile() && (entry.name.endsWith('.fst') || entry.name.endsWith('.vcd'))) {
-					waveformFiles.push(path.join(directory, entry.name));
+					results.push(full);
 				} else if (entry.isDirectory()) {
-					// Also check common subdirectories where waveform files might be
-					const subdirPath = path.join(directory, entry.name);
-					if (['sim_build', 'results', 'output', 'waveforms'].includes(entry.name)) {
-						const subFiles = await this.findWaveformFiles(subdirPath);
-						waveformFiles.push(...subFiles);
-					}
+					if ([".git", "node_modules", ".venv", "venv", ".cocotb-env", ".vscode"].includes(entry.name)) continue;
+					visit(full, depth - 1);
 				}
 			}
-
-			// Sort by file type (fst first) then by modification time (newest first)
-			waveformFiles.sort((a, b) => {
-				const aIsFst = a.endsWith('.fst');
-				const bIsFst = b.endsWith('.fst');
-
-				// Prioritize .fst files over .vcd files
-				if (aIsFst && !bIsFst) return -1;
-				if (!aIsFst && bIsFst) return 1;
-
-				// If same type, sort by modification time (newest first)
-				const aStat = fs.statSync(a);
-				const bStat = fs.statSync(b);
-				return bStat.mtime.getTime() - aStat.mtime.getTime();
-			});
-
-		} catch (error) {
-			// Ignore errors (directory might not exist, permission issues, etc.)
-		}
-
-		return waveformFiles;
+		};
+		visit(directory, maxDepth);
+		// Sort: .fst first, then newest mtime
+		results.sort((a, b) => {
+			const aIsFst = a.endsWith('.fst');
+			const bIsFst = b.endsWith('.fst');
+			if (aIsFst !== bIsFst) return aIsFst ? -1 : 1;
+			let am = 0, bm = 0;
+			try { am = fs.statSync(a).mtime.getTime(); } catch { }
+			try { bm = fs.statSync(b).mtime.getTime(); } catch { }
+			return bm - am;
+		});
+		return results;
 	}
 
 	private showGtkwaveManualInstallInstructions(): void {

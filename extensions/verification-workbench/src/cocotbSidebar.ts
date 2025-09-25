@@ -99,6 +99,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 						await this._runner.viewWaveforms();
 						break;
 					}
+					case "openGtkwaveGuiOnly": {
+						await this._runner.openGtkwaveGuiOnly();
+						break;
+					}
 				}
 			},
 			undefined,
@@ -226,7 +230,8 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 		<button id="runBtn" class="button" style="margin-top: 8px;">▶️ Run Tests</button>
 		<button id="stopBtn" class="button">⏹️ Stop Tests</button>
 		<button id="cleanBtn" class="button">🧹 Clean Tests</button>
-		<button id="viewWaveformsBtn" class="button" style="margin-top: 8px;">🌊 View Waveforms</button>
+		<button id="viewWaveformsBtn" class="button" style="margin-top: 8px;">🌊 View Latest Waveform</button>
+		<button id="openGtkwaveBtn" class="button">🪟 Open GTKWave GUI</button>
 	</div>
 
 	<div class="section">
@@ -310,6 +315,10 @@ export class CocotbSidebar implements vscode.WebviewViewProvider {
 
 		document.getElementById('viewWaveformsBtn').addEventListener('click', () => {
 			vscode.postMessage({ command: 'viewWaveforms' });
+		});
+
+		document.getElementById('openGtkwaveBtn').addEventListener('click', () => {
+			vscode.postMessage({ command: 'openGtkwaveGuiOnly' });
 		});
 
 		document.getElementById('checkBtn').addEventListener('click', () => {
