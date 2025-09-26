@@ -269,6 +269,11 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			if (assistantText !== undefined) {
 				AITerminalProvider._lastAssistantText = assistantText;
 				AITerminalProvider._assistantEmitter.fire(assistantText);
+
+				// Check if this is a testbench generation request and extract Python code
+				if (userText.includes("Generate a Python testbench using cocotb") || userText.includes("testbench")) {
+					await this._extractAndSaveTestbench(assistantText);
+				}
 			}
 		} catch (err: any) {
 			let message = err?.message ?? String(err);
@@ -286,6 +291,261 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 	private _postMessage(msg: any) {
 		if (this._view) {
 			this._view.webview.postMessage(msg);
+		}
+	}
+
+	private async _extractAndSaveTestbench(responseText: string) {
+		try {
+			// Extract Python code from the response
+			const pythonCode = this._extractPythonCode(responseText);
+			if (!pythonCode) {
+				console.log("No Python code found in response");
+				return;
+			}
+
+			// Get the test directory from cocotb configuration
+			const config = vscode.workspace.getConfiguration();
+			const testDir = config.get<string>("cocotb.testDirectory", "");
+
+			if (!testDir) {
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: "⚠️ No test directory configured. Please set cocotb.testDirectory in settings or use the Cocotb sidebar to browse for a test directory."
+					}
+				});
+				return;
+			}
+
+			// Create test.py file path
+			const testFilePath = vscode.Uri.joinPath(vscode.Uri.file(testDir), "test.py");
+
+			// Write the Python code to the file
+			await vscode.workspace.fs.writeFile(testFilePath, Buffer.from(pythonCode, 'utf8'));
+
+			// Show success message
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "📝 Starting automated workflow: Makefile check → Test execution"
+				}
+			});
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: `✅ Testbench saved to: ${testFilePath.fsPath}`
+				}
+			});
+
+			// Open the file in the editor
+			await vscode.window.showTextDocument(testFilePath);
+
+			// Check and update Makefile configuration
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "🔍 Checking and updating Makefile..."
+				}
+			});
+			const makefileUpdated = await this._checkAndUpdateMakefile(testDir);
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: `📋 Makefile check result: ${makefileUpdated ? 'SUCCESS' : 'FAILED'}`
+				}
+			});
+
+			// Automatically run the cocotb tests (regardless of Makefile status)
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "🏃 Starting cocotb test execution..."
+				}
+			});
+			await this._runCocotbTests(testDir);
+
+		} catch (error: any) {
+			console.error("Error saving testbench:", error);
+			this._postMessage({
+				command: "chat:error",
+				payload: {
+					message: `Failed to save testbench: ${error.message}`
+				}
+			});
+		}
+	}
+
+	private _extractPythonCode(text: string): string | null {
+		// Look for Python code blocks in markdown format
+		const pythonCodeRegex = /```(?:python|py)?\n([\s\S]*?)```/;
+		const match = text.match(pythonCodeRegex);
+
+		if (match && match[1]) {
+			return match[1].trim();
+		}
+
+		// If no markdown code block, look for Python-like content
+		// This is a fallback for responses that don't use proper markdown
+		const lines = text.split('\n');
+		const pythonLines: string[] = [];
+		let inPythonBlock = false;
+
+		for (const line of lines) {
+			// Check if line looks like Python code
+			if (line.includes('import ') || line.includes('from ') || line.includes('def ') || line.includes('class ') || line.includes('@cocotb')) {
+				inPythonBlock = true;
+			}
+
+			if (inPythonBlock) {
+				pythonLines.push(line);
+
+				// Stop if we hit a non-Python line that's not indented
+				if (line.trim() && !line.startsWith(' ') && !line.startsWith('\t') && !line.includes('import ') && !line.includes('from ') && !line.includes('def ') && !line.includes('class ') && !line.includes('@cocotb') && !line.includes('#')) {
+					break;
+				}
+			}
+		}
+
+		if (pythonLines.length > 0) {
+			return pythonLines.join('\n').trim();
+		}
+
+		return null;
+	}
+
+	private async _checkAndUpdateMakefile(testDir: string): Promise<boolean> {
+		try {
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: `🔍 Checking Makefile in: ${testDir}`
+				}
+			});
+			const makefilePath = vscode.Uri.joinPath(vscode.Uri.file(testDir), "Makefile");
+
+			// Check if Makefile exists
+			try {
+				await vscode.workspace.fs.stat(makefilePath);
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: "✅ Makefile found, proceeding with update..."
+					}
+				});
+			} catch {
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: "⚠️ No Makefile found, skipping update"
+					}
+				});
+				return false;
+			}
+
+			// Read the Makefile
+			const makefileContent = await vscode.workspace.fs.readFile(makefilePath);
+			const makefileText = Buffer.from(makefileContent).toString('utf8');
+
+			// Check if COCOTB_TEST_MODULES is set to "test"
+			const testModulesRegex = /COCOTB_TEST_MODULES\s*=\s*(.+)/;
+			const match = makefileText.match(testModulesRegex);
+
+			if (match) {
+				const currentValue = match[1].trim();
+				if (currentValue === 'test') {
+					this._postMessage({
+						command: "chat:info",
+						payload: {
+							message: "✅ Makefile already configured: COCOTB_TEST_MODULES = test"
+						}
+					});
+					return true;
+				}
+
+				// Update the value
+				const updatedContent = makefileText.replace(testModulesRegex, 'COCOTB_TEST_MODULES = test');
+				await vscode.workspace.fs.writeFile(makefilePath, Buffer.from(updatedContent, 'utf8'));
+
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: `✅ Updated Makefile: COCOTB_TEST_MODULES = test (was: ${currentValue})`
+					}
+				});
+				return true;
+			} else {
+				// Add COCOTB_TEST_MODULES if it doesn't exist
+				const updatedContent = makefileText + '\nCOCOTB_TEST_MODULES = test\n';
+				await vscode.workspace.fs.writeFile(makefilePath, Buffer.from(updatedContent, 'utf8'));
+
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: "✅ Added to Makefile: COCOTB_TEST_MODULES = test"
+					}
+				});
+				return true;
+			}
+
+		} catch (error: any) {
+			console.error("Error updating Makefile:", error);
+			this._postMessage({
+				command: "chat:error",
+				payload: {
+					message: `Failed to update Makefile: ${error.message}`
+				}
+			});
+			return false;
+		}
+	}
+
+	private async _runCocotbTests(testDir: string) {
+		try {
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "🚀 Running cocotb tests..."
+				}
+			});
+
+			// Wait a moment to ensure file is fully written
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "⏳ Waiting for file to be fully written..."
+				}
+			});
+			await new Promise(resolve => setTimeout(resolve, 1000));
+
+			// Execute the cocotb run command
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "⚡ Executing cocotb.runTests command..."
+				}
+			});
+			const result = await vscode.commands.executeCommand('cocotb.runTests');
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: `📊 Cocotb command result: ${result ? 'SUCCESS' : 'NO RESULT'}`
+				}
+			});
+
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "✅ Cocotb tests execution initiated"
+				}
+			});
+
+		} catch (error: any) {
+			this._postMessage({
+				command: "chat:error",
+				payload: {
+					message: `❌ Error running cocotb tests: ${error.message}`
+				}
+			});
 		}
 	}
 
@@ -434,10 +694,14 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					addMessage('assistant', message.payload?.text || '');
 					break;
 				}
-				case 'chat:error': {
-					addMessage('assistant', 'Error: ' + (message.payload?.message || 'Unknown error'));
-					break;
-				}
+			case 'chat:error': {
+				addMessage('assistant', 'Error: ' + (message.payload?.message || 'Unknown error'));
+				break;
+			}
+			case 'chat:info': {
+				addMessage('assistant', message.payload?.message || '');
+				break;
+			}
 			case 'chat:typing': {
 				console.log('Received chat:typing message:', message.payload);
 				setTyping(Boolean(message.payload?.on), message.payload?.message || 'Thinking…');
@@ -976,7 +1240,7 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	const cocotbCmd = registerSelectionIntent(
 		"chipAssistant.cocotbTestSelection",
-		"Generate a Python testbench using cocotb for this RTL module. Include: 1) Signal declarations and DUT instantiation, 2) Clock and reset generation, 3) Basic test stimulus, 4) Simple assertions. Keep it concise but functional.",
+		"Generate a Python testbench using cocotb for this RTL module, which is a systolic array for vector and matrix multiplication.",
 	);
 
 	// OpenROAD: Show Results Panel
