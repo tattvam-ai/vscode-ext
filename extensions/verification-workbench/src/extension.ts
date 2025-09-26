@@ -550,10 +550,10 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			// Assume failure for AI-generated testbenches (realistic scenario)
 			// In production, this would be based on actual test results
 			if (originalPrompt) {
-				// Set up a timer to check for test completion and failure detection
+				// Set up a timer to check for test completion and capture output
 				setTimeout(async () => {
-					await this._offerTestbenchRegeneration(originalPrompt, 1);
-				}, 5000); // Check after 5 seconds
+					await this._checkForTestFailureAndAnalyze(testDir, originalPrompt, regenerationAttempt);
+				}, 8000); // Wait 8 seconds for tests to complete
 			}
 
 		} catch (error: any) {
@@ -596,6 +596,300 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			attempt: regenerationAttempt + 1
 		};
 		console.log("Stored pending regeneration:", this._pendingRegeneration);
+	}
+
+	private async _checkForTestFailureAndAnalyze(testDir: string, originalPrompt: string, regenerationAttempt: number) {
+		try {
+			// Capture test output from various sources
+			const testOutput = await this._captureTestOutput(testDir);
+
+			// Log the captured output for debugging
+			console.log("Captured test output:", testOutput);
+
+			// Check for success indicators first
+			const hasSuccess = testOutput && (
+				testOutput.includes('PASSED') ||
+				testOutput.includes('PASS') ||
+				testOutput.includes('SUCCESS') ||
+				testOutput.includes('All tests passed') ||
+				testOutput.includes('Test completed successfully') ||
+				testOutput.includes('0 failures') ||
+				testOutput.includes('simulation finished')
+			);
+
+			// Check for failure indicators
+			const hasFailure = testOutput && (
+				testOutput.includes('Error') ||
+				testOutput.includes('FAILED') ||
+				testOutput.includes('make: ***') ||
+				testOutput.includes('FAIL') ||
+				testOutput.includes('error') ||
+				testOutput.includes('failed') ||
+				testOutput.includes('Exception') ||
+				testOutput.includes('Traceback')
+			);
+
+			if (hasSuccess && !hasFailure) {
+				// Tests actually succeeded!
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: "🎉 Tests completed successfully! The AI-generated testbench is working correctly."
+					}
+				});
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: "✅ No regeneration needed. The testbench is ready for use."
+					}
+				});
+			} else if (hasFailure) {
+				// Tests failed, analyze the failure
+				this._postMessage({
+					command: "chat:info",
+					payload: {
+						message: `🔍 Detected test failure in output. Analyzing...`
+					}
+				});
+				await this._analyzeFailureAndOfferRegeneration(testOutput, originalPrompt, regenerationAttempt);
+			} else {
+				// No clear success or failure indicators - check if this is first attempt
+				if (regenerationAttempt === 0) {
+					// First attempt with no clear indicators - assume failure for AI-generated testbench
+					this._postMessage({
+						command: "chat:info",
+						payload: {
+							message: `⚠️ No clear success/failure indicators found. Assuming failure for first AI-generated testbench attempt.`
+						}
+					});
+					await this._analyzeFailureAndOfferRegeneration(testOutput || "No specific test output captured", originalPrompt, regenerationAttempt);
+				} else {
+					// Subsequent attempts - be more conservative
+					this._postMessage({
+						command: "chat:info",
+						payload: {
+							message: `⚠️ No clear success/failure indicators found in regeneration attempt ${regenerationAttempt}.`
+						}
+					});
+					this._postMessage({
+						command: "chat:info",
+						payload: {
+							message: "🔄 Would you like to try regenerating again or stop here?",
+							buttons: [
+								{ id: "regenerate_yes", text: "Try again", action: "regenerate" },
+								{ id: "regenerate_no", text: "Stop here", action: "stop" }
+							]
+						}
+					});
+
+					// Store context for user choice
+					this._pendingRegeneration = {
+						prompt: originalPrompt,
+						attempt: regenerationAttempt + 1
+					};
+				}
+			}
+		} catch (error: any) {
+			console.error("Error checking test failure:", error);
+			// Fallback to simple regeneration offer
+			await this._offerTestbenchRegeneration(originalPrompt, regenerationAttempt);
+		}
+	}
+
+	private async _captureTestOutput(testDir: string): Promise<string> {
+		try {
+			// Try to read from common cocotb output files
+			const possibleOutputFiles = [
+				'results.xml',
+				'cocotb.log',
+				'sim_build/sim.log',
+				'sim_build/compile.log',
+				'sim_build/simv.log',
+				'sim_build/verilator.log',
+				'Makefile.log'
+			];
+
+			let capturedOutput = "";
+			let foundFiles = 0;
+
+			for (const fileName of possibleOutputFiles) {
+				try {
+					const filePath = vscode.Uri.joinPath(vscode.Uri.file(testDir), fileName);
+					const content = await vscode.workspace.fs.readFile(filePath);
+					const text = Buffer.from(content).toString('utf8');
+					if (text && text.length > 0) {
+						capturedOutput += `\n=== ${fileName} ===\n${text}\n`;
+						foundFiles++;
+					}
+				} catch {
+					// File doesn't exist or can't be read, try next one
+					continue;
+				}
+			}
+
+			if (foundFiles > 0) {
+				return capturedOutput;
+			}
+
+			// If no specific output files found, check if there are any files in the directory
+			try {
+				const dirContents = await vscode.workspace.fs.readDirectory(vscode.Uri.file(testDir));
+				const logFiles = dirContents.filter(([name, type]) =>
+					type === vscode.FileType.File &&
+					(name.includes('.log') || name.includes('results') || name.includes('sim'))
+				);
+
+				if (logFiles.length > 0) {
+					return `Found ${logFiles.length} potential log files but couldn't read them: ${logFiles.map(([name]) => name).join(', ')}`;
+				}
+			} catch {
+				// Directory read failed
+			}
+
+			// Return a message indicating we should assume failure for AI-generated testbenches
+			return "No test output files found. This is typical for AI-generated testbenches which often fail due to syntax errors, signal mismatches, or missing clock/reset logic.";
+		} catch (error: any) {
+			console.error("Error capturing test output:", error);
+			return "Error capturing test output: " + error.message;
+		}
+	}
+
+	private async _analyzeFailureAndOfferRegeneration(testOutput: string, originalPrompt: string, regenerationAttempt: number) {
+		// Show failure message
+		this._postMessage({
+			command: "chat:error",
+			payload: {
+				message: `❌ Tests failed (attempt ${regenerationAttempt}). Analyzing failure...`
+			}
+		});
+
+		// Create analysis prompt
+		const analysisPrompt = `Can you identify the failure points from this cocotb test output and suggest specific fixes?
+
+Test Output:
+${testOutput}
+
+Please analyze the errors and provide specific recommendations for fixing the testbench. Focus on:
+1. Syntax errors
+2. Signal connection issues
+3. Clock/reset problems
+4. Data type mismatches
+5. Cocotb API usage issues
+
+Provide a brief analysis of the main issues found.`;
+
+		// Send analysis request to AI
+		this._postMessage({
+			command: "chat:info",
+			payload: {
+				message: "🔍 Analyzing test failure with AI..."
+			}
+		});
+
+		try {
+			// Get AI analysis of the failure
+			const analysisResponse = await this._getAIAnalysis(analysisPrompt);
+
+			// Show the analysis to user
+			this._postMessage({
+				command: "chat:assistant",
+				payload: {
+					text: `**Failure Analysis:**\n\n${analysisResponse}`
+				}
+			});
+
+			// Offer regeneration with improved prompt
+			this._postMessage({
+				command: "chat:info",
+				payload: {
+					message: "🔄 Based on the analysis above, would you like me to regenerate the testbench with fixes?",
+					buttons: [
+						{ id: "regenerate_yes", text: "Yes, regenerate with fixes", action: "regenerate" },
+						{ id: "regenerate_no", text: "No, stop here", action: "stop" }
+					]
+				}
+			});
+
+			// Store enhanced regeneration context
+			this._pendingRegeneration = {
+				prompt: `${originalPrompt}\n\nPrevious attempt failed. Please fix these issues:\n${analysisResponse}`,
+				attempt: regenerationAttempt + 1
+			};
+
+		} catch (error: any) {
+			console.error("Error getting AI analysis:", error);
+			// Fallback to simple regeneration offer
+			await this._offerTestbenchRegeneration(originalPrompt, regenerationAttempt);
+		}
+	}
+
+	private async _getAIAnalysis(prompt: string): Promise<string> {
+		try {
+			// Use the same AI service as the main chat
+			const config = vscode.workspace.getConfiguration();
+			const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
+
+			if (!apiKey) {
+				return "API key not configured. Providing generic analysis: AI-generated testbenches commonly fail due to syntax errors, missing clock/reset logic, signal width mismatches, or incorrect Cocotb API usage.";
+			}
+
+			const useAdvanced = config.get<boolean>("chipAssistant.openai.useAdvancedModel", false);
+			const baseModel = config.get<string>("chipAssistant.openai.model", "o3-mini");
+			const advancedModel = config.get<string>("chipAssistant.openai.advancedModel", "gpt-4o");
+			const model = useAdvanced ? advancedModel : baseModel;
+
+			const response = await fetch("https://api.openai.com/v1/chat/completions", {
+				method: "POST",
+				headers: {
+					"Authorization": `Bearer ${apiKey}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					model: model,
+					messages: [
+						{
+							role: "system",
+							content: "You are an expert in Cocotb testbench debugging. Analyze test failures and provide specific, actionable recommendations for fixing Python testbenches. Keep responses concise and focused on technical issues."
+						},
+						{
+							role: "user",
+							content: prompt
+						}
+					],
+					temperature: model.includes('gpt-5') ? undefined : 0.2,
+					max_tokens: 800
+				}),
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				console.error("OpenAI API error:", response.status, errorText);
+				return this._getGenericFailureAnalysis();
+			}
+
+			const data = await response.json() as any;
+			const analysis = data.choices?.[0]?.message?.content || this._getGenericFailureAnalysis();
+
+			return analysis;
+		} catch (error: any) {
+			console.error("Error getting AI analysis:", error);
+			return this._getGenericFailureAnalysis();
+		}
+	}
+
+	private _getGenericFailureAnalysis(): string {
+		return `**Common AI-Generated Testbench Issues:**
+
+1. **Clock Generation**: Missing or incorrect clock signal generation
+2. **Reset Logic**: Improper reset sequence or missing reset handling
+3. **Signal Widths**: Mismatched signal widths between testbench and DUT
+4. **Signal Connections**: Incorrect port connections or missing signals
+5. **Python Syntax**: Missing colons, incorrect indentation, or typos
+6. **Cocotb API**: Using deprecated APIs or incorrect function calls
+7. **Data Types**: Wrong data types for signals or test values
+8. **Timing Issues**: Missing delays or incorrect timing relationships
+
+The regenerated testbench will address these common issues with proper clock generation, reset handling, and modern Cocotb v2.0+ APIs.`;
 	}
 
 	private async _handleRegenerationResponse(action: string) {
