@@ -26,7 +26,7 @@
 			{ "command": "chipAssistant.findBugsSelection", "title": "Find Bugs in Selection" },
 			{ "command": "chipAssistant.assertionsSelection", "title": "Generate SystemVerilog Assertions" },
 			{ "command": "chipAssistant.optimizeSelection", "title": "Optimize Selection" },
-			{ "command": "chipAssistant.cocotbTestSelection", "title": "Generate Cocotb Test" },
+			{ "command": "chipAssistant.cocotbTestSelection", "title": "Generate TB" },
 			{
 				"command": "chipAssistant.setApiKey",
 				"title": "Chip Assistant: Set OpenAI API Key"
@@ -34,6 +34,18 @@
 			{
 				"command": "chipAssistant.clearApiKey",
 				"title": "Chip Assistant: Clear OpenAI API Key"
+			},
+			{
+				"command": "chipAssistant.toggleAdvancedModel",
+				"title": "Chip Assistant: Toggle Advanced Model"
+			},
+			{
+				"command": "chipAssistant.useAdvancedModel",
+				"title": "Chip Assistant: Use Advanced Model (Large Context)"
+			},
+			{
+				"command": "chipAssistant.useStandardModel",
+				"title": "Chip Assistant: Use Standard Model"
 			},
 			{ "command": "openroad.setFlowHome", "title": "OpenROAD: Set FLOW_HOME" },
 			{ "command": "openroad.configureFlow", "title": "OpenROAD: Configure Flow" },
@@ -122,7 +134,35 @@
 				"chipAssistant.openai.model": {
 					"type": "string",
 					"default": "o3-mini",
-					"description": "OpenAI model name (e.g., o3-mini, gpt-4o-mini)"
+					"description": "OpenAI model name (e.g., o3-mini, gpt-4o-mini, gpt-5-mini, gpt-4o, o1-preview, o1-mini)",
+					"enum": [
+						"o3-mini",
+						"gpt-4o-mini",
+						"gpt-5-mini",
+						"gpt-4o",
+						"o1-preview",
+						"o1-mini",
+						"gpt-4-turbo",
+						"gpt-4"
+					]
+				},
+				"chipAssistant.openai.useAdvancedModel": {
+					"type": "boolean",
+					"default": false,
+					"description": "Temporarily use advanced model with larger context window (o1-preview or gpt-4o)"
+				},
+				"chipAssistant.openai.advancedModel": {
+					"type": "string",
+					"default": "gpt-4o",
+					"description": "Advanced model to use when useAdvancedModel is enabled",
+					"enum": [
+						"gpt-4o",
+						"gpt-4-turbo",
+						"gpt-4",
+						"gpt-5-mini",
+						"o1-preview",
+						"o1-mini"
+					]
 				},
 				"chipAssistant.openai.baseUrl": {
 					"type": "string",
@@ -131,8 +171,8 @@
 				},
 				"chipAssistant.request.timeoutMs": {
 					"type": "number",
-					"default": 60000,
-					"description": "Request timeout in milliseconds"
+					"default": 180000,
+					"description": "Request timeout in milliseconds (3 minutes default, 5 minutes for advanced models)"
 				},
 				"chipAssistant.showEffectivePrompt": {
 					"type": "boolean",

@@ -79,10 +79,37 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					}
 					case "chat:getConfig": {
 						const config = vscode.workspace.getConfiguration();
-						const model = config.get<string>("chipAssistant.openai.model", "o3-mini");
+						const useAdvanced = config.get<boolean>("chipAssistant.openai.useAdvancedModel", false);
+						const baseModel = config.get<string>("chipAssistant.openai.model", "o3-mini");
+						const advancedModel = config.get<string>("chipAssistant.openai.advancedModel", "gpt-4o");
+						const model = useAdvanced ? advancedModel : baseModel;
 						const baseUrl = config.get<string>("chipAssistant.openai.baseUrl", "https://api.openai.com/v1");
 						const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
-						this._postMessage({ command: "chat:config", payload: { hasKey: Boolean(apiKey), model, baseUrl } });
+						this._postMessage({ command: "chat:config", payload: { hasKey: Boolean(apiKey), model, baseUrl, useAdvanced, baseModel, advancedModel } });
+						break;
+					}
+					case "chat:setModel": {
+						const config = vscode.workspace.getConfiguration();
+						const { model, useAdvanced } = message.payload;
+
+						if (useAdvanced) {
+							await config.update("chipAssistant.openai.advancedModel", model, vscode.ConfigurationTarget.Workspace);
+							await config.update("chipAssistant.openai.useAdvancedModel", true, vscode.ConfigurationTarget.Workspace);
+						} else {
+							await config.update("chipAssistant.openai.model", model, vscode.ConfigurationTarget.Workspace);
+							await config.update("chipAssistant.openai.useAdvancedModel", false, vscode.ConfigurationTarget.Workspace);
+						}
+
+						vscode.window.showInformationMessage(`Chip Assistant: Switched to ${model}`);
+						break;
+					}
+					case "chat:toggleAdvanced": {
+						const config = vscode.workspace.getConfiguration();
+						const { useAdvanced } = message.payload;
+						await config.update("chipAssistant.openai.useAdvancedModel", useAdvanced, vscode.ConfigurationTarget.Workspace);
+
+						const currentModel = config.get<string>(useAdvanced ? "chipAssistant.openai.advancedModel" : "chipAssistant.openai.model", "o3-mini");
+						vscode.window.showInformationMessage(`Chip Assistant: ${useAdvanced ? 'Enabled' : 'Disabled'} Advanced Mode (${currentModel})`);
 						break;
 					}
 				}
@@ -99,11 +126,19 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		this._postMessage({ command: "chat:userEcho", payload: { text: userText } });
 		this._postMessage({ command: "chat:typing", payload: { on: true } });
 
+		let progressInterval: NodeJS.Timeout | undefined;
 		try {
 			const config = vscode.workspace.getConfiguration();
-			const model = config.get<string>("chipAssistant.openai.model", "o3-mini");
+			const useAdvanced = config.get<boolean>("chipAssistant.openai.useAdvancedModel", false);
+			const baseModel = config.get<string>("chipAssistant.openai.model", "o3-mini");
+			const advancedModel = config.get<string>("chipAssistant.openai.advancedModel", "gpt-4o");
+			const model = useAdvanced ? advancedModel : baseModel;
 			const baseUrl = config.get<string>("chipAssistant.openai.baseUrl", "https://api.openai.com/v1");
-			const timeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 180000);
+
+			// Dynamic timeout based on model type - advanced models get more time
+			const baseTimeoutMs = config.get<number>("chipAssistant.request.timeoutMs", 180000);
+			const timeoutMs = useAdvanced ? Math.max(baseTimeoutMs, 300000) : baseTimeoutMs; // 5 minutes for advanced models
+
 			const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
 
 			if (!apiKey) {
@@ -111,56 +146,104 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 				return;
 			}
 
+			// Show timeout info for advanced models
+			if (useAdvanced) {
+				this._postMessage({
+					command: "chat:typing",
+					payload: {
+						on: true,
+						message: `ℹ️ Using advanced model (${model}) with ${Math.round(timeoutMs / 1000)}s timeout for complex requests...`
+					}
+				});
+			}
+
 			const controller = new AbortController();
 			const t = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
 
+			// Simple progress feedback for longer requests
+			console.log("TimeoutMs:", timeoutMs);
+			if (timeoutMs > 10000) { // Show "Still Thinking" for requests > 10 seconds (for testing)
+				console.log("Setting up Still Thinking timeout...");
+				progressInterval = setTimeout(() => {
+					console.log("Sending Still Thinking message...");
+					this._postMessage({
+						command: "chat:typing",
+						payload: {
+							on: true,
+							message: "Still Thinking..."
+						}
+					});
+				}, 10000); // Update after 10 seconds (for testing)
+			}
+
 			let assistantText: string | undefined;
 			try {
-				const resp = await fetch(`${baseUrl}/responses`, {
+				// Build request body with conditional temperature
+				const requestBody: any = {
+					model,
+					messages: [
+						{ role: "user", content: userText },
+					],
+				};
+
+				// Only add temperature for models that support it (not GPT-5 mini)
+				if (!model.includes('gpt-5')) {
+					requestBody.temperature = 0.2;
+				}
+
+				const resp = await fetch(`${baseUrl}/chat/completions`, {
 					method: "POST",
 					headers: {
 						"Authorization": `Bearer ${apiKey}`,
 						"Content-Type": "application/json",
 					},
-					body: JSON.stringify({
-						model,
-						input: [
-							{
-								role: "user",
-								content: [{ type: "text", text: userText }],
-							},
-						],
-					}),
+					body: JSON.stringify(requestBody),
 					signal: controller.signal,
 				});
 				if (resp.ok) {
 					const data: any = await resp.json();
-					assistantText = AITerminalProvider._extractTextFromResponses(data);
+					assistantText = data?.choices?.[0]?.message?.content ?? "";
+				} else {
+					console.log("Primary API call failed with status:", resp.status);
+					const errorText = await resp.text();
+					console.log("Error response:", errorText);
 				}
 			} catch (err: any) {
 				console.log("Primary API call failed:", err.message);
+				if (err.name === 'AbortError') {
+					console.log("Request was aborted due to timeout");
+				}
 				// fallback
 			} finally {
 				clearTimeout(t);
+				if (progressInterval) clearTimeout(progressInterval);
 			}
 
 			if (!assistantText) {
 				const controller2 = new AbortController();
 				const t2 = setTimeout(() => controller2.abort(), Math.max(1000, timeoutMs));
 				try {
+					// Build fallback request body with conditional temperature
+					const fallbackModel = model === "o3-mini" ? "gpt-4o-mini" : model;
+					const fallbackBody: any = {
+						model: fallbackModel,
+						messages: [
+							{ role: "user", content: userText },
+						],
+					};
+
+					// Only add temperature for models that support it (not GPT-5 mini)
+					if (!fallbackModel.includes('gpt-5')) {
+						fallbackBody.temperature = 0.2;
+					}
+
 					const resp2 = await fetch(`${baseUrl}/chat/completions`, {
 						method: "POST",
 						headers: {
 							"Authorization": `Bearer ${apiKey}`,
 							"Content-Type": "application/json",
 						},
-						body: JSON.stringify({
-							model: model === "o3-mini" ? "gpt-4o-mini" : model,
-							messages: [
-								{ role: "user", content: userText },
-							],
-							temperature: 0.2,
-						}),
+						body: JSON.stringify(fallbackBody),
 						signal: controller2.signal,
 					});
 					if (!resp2.ok) {
@@ -178,6 +261,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					}
 				} finally {
 					clearTimeout(t2);
+					if (progressInterval) clearTimeout(progressInterval);
 				}
 			}
 
@@ -195,6 +279,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		}
 		finally {
 			this._postMessage({ command: "chat:typing", payload: { on: false } });
+			if (progressInterval) clearTimeout(progressInterval);
 		}
 	}
 
@@ -254,7 +339,12 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		.msg.assistant .bubble li { margin: 2px 0; }
 		.msg.assistant .bubble code { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); padding: 0 3px; border-radius: 3px; }
 		.msg.assistant .bubble pre { background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15)); padding: 8px; border-radius: 6px; overflow-x: auto; }
-		.footer { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--vscode-panel-border); }
+		.footer { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-top: 1px solid var(--vscode-panel-border); }
+		.model-controls { display: flex; gap: 12px; align-items: center; margin-bottom: 4px; }
+		.model-controls select { padding: 4px 8px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 4px; font-size: 12px; }
+		.advanced-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--vscode-foreground); cursor: pointer; }
+		.advanced-toggle input[type="checkbox"] { margin: 0; }
+		.footer-row { display: flex; gap: 8px; }
 		textarea { flex: 1; resize: none; max-height: 120px; min-height: 38px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 6px; padding: 8px; font-family: var(--vscode-font-family); }
 		button { padding: 6px 12px; border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; cursor: pointer; }
 	</style>
@@ -263,8 +353,26 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 	<div class="header">Chip Assistant</div>
 	<div class="chat-container" id="chatContainer"></div>
 	<div class="footer">
-		<textarea id="promptInput" placeholder="Ask about RTL, testbenches, SystemVerilog..."></textarea>
-		<button id="sendBtn">Send</button>
+		<div class="model-controls">
+			<select id="modelSelect">
+				<option value="o3-mini">o3-mini (Standard)</option>
+				<option value="gpt-4o-mini">gpt-4o-mini (Standard)</option>
+				<option value="gpt-5-mini">gpt-5-mini (Standard)</option>
+				<option value="gpt-4o">gpt-4o (Advanced)</option>
+				<option value="gpt-4-turbo">gpt-4-turbo (Advanced)</option>
+				<option value="gpt-4">gpt-4 (Advanced)</option>
+				<option value="o1-preview">o1-preview (Advanced)</option>
+				<option value="o1-mini">o1-mini (Advanced)</option>
+			</select>
+			<label class="advanced-toggle">
+				<input type="checkbox" id="advancedModeToggle">
+				<span>Advanced Mode</span>
+			</label>
+		</div>
+		<div class="footer-row">
+			<textarea id="promptInput" placeholder="Ask about RTL, testbenches, SystemVerilog..."></textarea>
+			<button id="sendBtn">Send</button>
+		</div>
 	</div>
 
 	<script>
@@ -283,19 +391,28 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		}
 
 		let typingEl = null;
-		function setTyping(on) {
+		function setTyping(on, message = 'Thinking…') {
+			console.log('setTyping called:', on, message);
 			const container = document.getElementById('chatContainer');
 			if (on) {
-				if (typingEl) return;
+				if (typingEl) {
+					// Update existing thinking message
+					console.log('Updating existing typing message to:', message);
+					const bubble = typingEl.querySelector('.bubble');
+					if (bubble) bubble.textContent = message;
+					return;
+				}
+				console.log('Creating new typing message:', message);
 				typingEl = document.createElement('div');
 				typingEl.className = 'msg assistant';
 				const b = document.createElement('div');
 				b.className = 'bubble';
-				b.textContent = 'Thinking…';
+				b.textContent = message;
 				typingEl.appendChild(b);
 				container.appendChild(typingEl);
 				container.scrollTop = container.scrollHeight;
 			} else if (typingEl) {
+				console.log('Removing typing message');
 				typingEl.remove();
 				typingEl = null;
 			}
@@ -321,13 +438,38 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					addMessage('assistant', 'Error: ' + (message.payload?.message || 'Unknown error'));
 					break;
 				}
-				case 'chat:typing': {
-					setTyping(Boolean(message.payload?.on));
-					break;
+			case 'chat:typing': {
+				console.log('Received chat:typing message:', message.payload);
+				setTyping(Boolean(message.payload?.on), message.payload?.message || 'Thinking…');
+				break;
+			}
+			case 'chat:config': {
+				// Update UI with current configuration
+				const config = message.payload;
+				if (config) {
+					const modelSelect = document.getElementById('modelSelect');
+					const advancedToggle = document.getElementById('advancedModeToggle');
+
+					// Set the model dropdown
+					if (modelSelect && config.model) {
+						modelSelect.value = config.model;
+					}
+
+					// Set the advanced mode toggle
+					if (advancedToggle && config.useAdvanced !== undefined) {
+						advancedToggle.checked = config.useAdvanced;
+					}
 				}
-				case 'chat:config': {
-					break;
-				}
+				break;
+			}
+			case 'chat:setModel': {
+				// Model selection handled by backend
+				break;
+			}
+			case 'chat:toggleAdvanced': {
+				// Advanced mode toggle handled by backend
+				break;
+			}
 				case 'chat:userEcho': {
 					addMessage('user', message.payload?.text || '');
 					break;
@@ -342,6 +484,28 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 				sendPrompt();
 			}
 		});
+
+		// Model selection controls
+		document.getElementById('modelSelect').addEventListener('change', function (e) {
+			const selectedModel = e.target.value;
+			const isAdvanced = ['gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-5-mini', 'o1-preview', 'o1-mini'].includes(selectedModel);
+			vscode.postMessage({
+				command: 'chat:setModel',
+				payload: {
+					model: selectedModel,
+					useAdvanced: isAdvanced
+				}
+			});
+		});
+
+		document.getElementById('advancedModeToggle').addEventListener('change', function (e) {
+			const useAdvanced = e.target.checked;
+			vscode.postMessage({
+				command: 'chat:toggleAdvanced',
+				payload: { useAdvanced }
+			});
+		});
+
 		vscode.postMessage({ command: 'chat:getConfig' });
 	</script>
 	</body>
@@ -378,7 +542,7 @@ class SelectionIntentCodeLensProvider implements vscode.CodeLensProvider {
 			{ title: "Find Bugs", command: "chipAssistant.findBugsSelection" },
 			{ title: "SV Assertions", command: "chipAssistant.assertionsSelection" },
 			{ title: "Optimize", command: "chipAssistant.optimizeSelection" },
-			{ title: "Cocotb Test", command: "chipAssistant.cocotbTestSelection" },
+			{ title: "Generate TB", command: "chipAssistant.cocotbTestSelection" },
 		];
 
 		return items.map(it => new vscode.CodeLens(range, { title: it.title, command: it.command }));
@@ -502,6 +666,37 @@ export function activate(context: vscode.ExtensionContext) {
 	const clearKey = vscode.commands.registerCommand("chipAssistant.clearApiKey", async () => {
 		await context.secrets.delete("chipAssistant.openai.apiKey");
 		vscode.window.showInformationMessage("Chip Assistant: API key cleared.");
+	});
+
+	// Advanced Model Commands
+	const toggleAdvancedModel = vscode.commands.registerCommand("chipAssistant.toggleAdvancedModel", async () => {
+		const config = vscode.workspace.getConfiguration();
+		const currentUseAdvanced = config.get<boolean>("chipAssistant.openai.useAdvancedModel", false);
+		await config.update("chipAssistant.openai.useAdvancedModel", !currentUseAdvanced, vscode.ConfigurationTarget.Workspace);
+
+		const newModel = !currentUseAdvanced ?
+			config.get<string>("chipAssistant.openai.advancedModel", "gpt-4o") :
+			config.get<string>("chipAssistant.openai.model", "o3-mini");
+
+		vscode.window.showInformationMessage(
+			`Chip Assistant: Switched to ${!currentUseAdvanced ? 'Advanced' : 'Standard'} model (${newModel})`
+		);
+	});
+
+	const useAdvancedModel = vscode.commands.registerCommand("chipAssistant.useAdvancedModel", async () => {
+		const config = vscode.workspace.getConfiguration();
+		await config.update("chipAssistant.openai.useAdvancedModel", true, vscode.ConfigurationTarget.Workspace);
+
+		const advancedModel = config.get<string>("chipAssistant.openai.advancedModel", "gpt-4o");
+		vscode.window.showInformationMessage(`Chip Assistant: Using Advanced model (${advancedModel}) with large context window`);
+	});
+
+	const useStandardModel = vscode.commands.registerCommand("chipAssistant.useStandardModel", async () => {
+		const config = vscode.workspace.getConfiguration();
+		await config.update("chipAssistant.openai.useAdvancedModel", false, vscode.ConfigurationTarget.Workspace);
+
+		const standardModel = config.get<string>("chipAssistant.openai.model", "o3-mini");
+		vscode.window.showInformationMessage(`Chip Assistant: Using Standard model (${standardModel})`);
 	});
 
 	// OpenROAD: Set FLOW_HOME
@@ -781,7 +976,7 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	const cocotbCmd = registerSelectionIntent(
 		"chipAssistant.cocotbTestSelection",
-		"Write a Python test using cocotb for this RTL module",
+		"Generate a Python testbench using cocotb for this RTL module. Include: 1) Signal declarations and DUT instantiation, 2) Clock and reset generation, 3) Basic test stimulus, 4) Simple assertions. Keep it concise but functional.",
 	);
 
 	// OpenROAD: Show Results Panel
@@ -793,6 +988,9 @@ export function activate(context: vscode.ExtensionContext) {
 		showAITerminal,
 		setKey,
 		clearKey,
+		toggleAdvancedModel,
+		useAdvancedModel,
+		useStandardModel,
 		setFlowHome,
 		configureFlow,
 		runFlow,
