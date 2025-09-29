@@ -328,20 +328,20 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			// Create test.py file path
 			const testFilePath = vscode.Uri.joinPath(vscode.Uri.file(testDir), "test.py");
 
+			// Show testplan panel and start workflow
+			this._postMessage({
+				command: "testplan:show",
+				payload: { show: true }
+			});
+
 			// Write the Python code to the file
 			await vscode.workspace.fs.writeFile(testFilePath, Buffer.from(pythonCode, 'utf8'));
-
-			// Show success message
 			this._postMessage({
-				command: "chat:info",
+				command: "testplan:updateStep",
 				payload: {
-					message: "📝 Starting automated workflow: Makefile check → Test execution"
-				}
-			});
-			this._postMessage({
-				command: "chat:info",
-				payload: {
-					message: `✅ Testbench saved to: ${testFilePath.fsPath}`
+					stepId: "testbench_save",
+					status: "success",
+					detail: testFilePath.fsPath
 				}
 			});
 
@@ -350,24 +350,30 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 
 			// Check and update Makefile configuration
 			this._postMessage({
-				command: "chat:info",
+				command: "testplan:updateStep",
 				payload: {
-					message: "🔍 Checking and updating Makefile..."
+					stepId: "makefile_check",
+					status: "in_progress",
+					detail: "Checking COCOTB_TEST_MODULES..."
 				}
 			});
 			const makefileUpdated = await this._checkAndUpdateMakefile(testDir);
 			this._postMessage({
-				command: "chat:info",
+				command: "testplan:updateStep",
 				payload: {
-					message: `📋 Makefile check result: ${makefileUpdated ? 'SUCCESS' : 'FAILED'}`
+					stepId: "makefile_check",
+					status: makefileUpdated ? "success" : "warning",
+					detail: makefileUpdated ? "COCOTB_TEST_MODULES = test" : "Makefile check failed"
 				}
 			});
 
 			// Automatically run the cocotb tests (regardless of Makefile status)
 			this._postMessage({
-				command: "chat:info",
+				command: "testplan:updateStep",
 				payload: {
-					message: "🏃 Starting cocotb test execution..."
+					stepId: "test_execution",
+					status: "in_progress",
+					detail: "Running cocotb tests..."
 				}
 			});
 			await this._runCocotbTests(testDir, originalPrompt || "", 0);
@@ -424,9 +430,11 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 	private async _checkAndUpdateMakefile(testDir: string): Promise<boolean> {
 		try {
 			this._postMessage({
-				command: "chat:info",
+				command: "testplan:updateStep",
 				payload: {
-					message: `🔍 Checking Makefile in: ${testDir}`
+					stepId: "makefile_check",
+					status: "in_progress",
+					detail: `Checking Makefile in: ${testDir}`
 				}
 			});
 			const makefilePath = vscode.Uri.joinPath(vscode.Uri.file(testDir), "Makefile");
@@ -435,16 +443,20 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			try {
 				await vscode.workspace.fs.stat(makefilePath);
 				this._postMessage({
-					command: "chat:info",
+					command: "testplan:updateStep",
 					payload: {
-						message: "✅ Makefile found, proceeding with update..."
+						stepId: "makefile_check",
+						status: "in_progress",
+						detail: "Makefile found, proceeding with update..."
 					}
 				});
 			} catch {
 				this._postMessage({
-					command: "chat:info",
+					command: "testplan:updateStep",
 					payload: {
-						message: "⚠️ No Makefile found, skipping update"
+						stepId: "makefile_check",
+						status: "warning",
+						detail: "No Makefile found, skipping update"
 					}
 				});
 				return false;
@@ -462,9 +474,11 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 				const currentValue = match[1].trim();
 				if (currentValue === 'test') {
 					this._postMessage({
-						command: "chat:info",
+						command: "testplan:updateStep",
 						payload: {
-							message: "✅ Makefile already configured: COCOTB_TEST_MODULES = test"
+							stepId: "makefile_check",
+							status: "success",
+							detail: "Makefile already configured: COCOTB_TEST_MODULES = test"
 						}
 					});
 					return true;
@@ -475,9 +489,11 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 				await vscode.workspace.fs.writeFile(makefilePath, Buffer.from(updatedContent, 'utf8'));
 
 				this._postMessage({
-					command: "chat:info",
+					command: "testplan:updateStep",
 					payload: {
-						message: `✅ Updated Makefile: COCOTB_TEST_MODULES = test (was: ${currentValue})`
+						stepId: "makefile_check",
+						status: "success",
+						detail: `Updated Makefile: COCOTB_TEST_MODULES = test (was: ${currentValue})`
 					}
 				});
 				return true;
@@ -487,9 +503,11 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 				await vscode.workspace.fs.writeFile(makefilePath, Buffer.from(updatedContent, 'utf8'));
 
 				this._postMessage({
-					command: "chat:info",
+					command: "testplan:updateStep",
 					payload: {
-						message: "✅ Added to Makefile: COCOTB_TEST_MODULES = test"
+						stepId: "makefile_check",
+						status: "success",
+						detail: "Added to Makefile: COCOTB_TEST_MODULES = test"
 					}
 				});
 				return true;
@@ -498,9 +516,11 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		} catch (error: any) {
 			console.error("Error updating Makefile:", error);
 			this._postMessage({
-				command: "chat:error",
+				command: "testplan:updateStep",
 				payload: {
-					message: `Failed to update Makefile: ${error.message}`
+					stepId: "makefile_check",
+					status: "error",
+					detail: `Failed to update Makefile: ${error.message}`
 				}
 			});
 			return false;
@@ -509,41 +529,18 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 
 	private async _runCocotbTests(testDir: string, originalPrompt?: string, regenerationAttempt: number = 0) {
 		try {
-			this._postMessage({
-				command: "chat:info",
-				payload: {
-					message: "🚀 Running cocotb tests..."
-				}
-			});
-
 			// Wait a moment to ensure file is fully written
-			this._postMessage({
-				command: "chat:info",
-				payload: {
-					message: "⏳ Waiting for file to be fully written..."
-				}
-			});
 			await new Promise(resolve => setTimeout(resolve, 1000));
 
 			// Execute the cocotb run command
-			this._postMessage({
-				command: "chat:info",
-				payload: {
-					message: "⚡ Executing cocotb.runTests command..."
-				}
-			});
 			const result = await vscode.commands.executeCommand('cocotb.runTests');
-			this._postMessage({
-				command: "chat:info",
-				payload: {
-					message: `📊 Cocotb command result: ${result ? 'SUCCESS' : 'NO RESULT'}`
-				}
-			});
 
 			this._postMessage({
-				command: "chat:info",
+				command: "testplan:updateStep",
 				payload: {
-					message: "✅ Cocotb tests execution initiated"
+					stepId: "test_execution",
+					status: "success",
+					detail: "Cocotb tests execution initiated"
 				}
 			});
 
@@ -632,23 +629,27 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			if (hasSuccess && !hasFailure) {
 				// Tests actually succeeded!
 				this._postMessage({
-					command: "chat:info",
+					command: "testplan:updateStep",
 					payload: {
-						message: "🎉 Tests completed successfully! The AI-generated testbench is working correctly."
+						stepId: "test_execution",
+						status: "success",
+						detail: "Tests completed successfully!"
 					}
 				});
 				this._postMessage({
 					command: "chat:info",
 					payload: {
-						message: "✅ No regeneration needed. The testbench is ready for use."
+						message: "🎉 Tests completed successfully! The AI-generated testbench is working correctly. ✅ No regeneration needed."
 					}
 				});
 			} else if (hasFailure) {
 				// Tests failed, analyze the failure
 				this._postMessage({
-					command: "chat:info",
+					command: "testplan:updateStep",
 					payload: {
-						message: `🔍 Detected test failure in output. Analyzing...`
+						stepId: "failure_analysis",
+						status: "in_progress",
+						detail: "Analyzing test failure..."
 					}
 				});
 				await this._analyzeFailureAndOfferRegeneration(testOutput, originalPrompt, regenerationAttempt);
@@ -657,18 +658,22 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 				if (regenerationAttempt === 0) {
 					// First attempt with no clear indicators - assume failure for AI-generated testbench
 					this._postMessage({
-						command: "chat:info",
+						command: "testplan:updateStep",
 						payload: {
-							message: `⚠️ No clear success/failure indicators found. Assuming failure for first AI-generated testbench attempt.`
+							stepId: "failure_analysis",
+							status: "in_progress",
+							detail: "No clear indicators found, assuming failure..."
 						}
 					});
 					await this._analyzeFailureAndOfferRegeneration(testOutput || "No specific test output captured", originalPrompt, regenerationAttempt);
 				} else {
 					// Subsequent attempts - be more conservative
 					this._postMessage({
-						command: "chat:info",
+						command: "testplan:updateStep",
 						payload: {
-							message: `⚠️ No clear success/failure indicators found in regeneration attempt ${regenerationAttempt}.`
+							stepId: "failure_analysis",
+							status: "warning",
+							detail: `No clear indicators in attempt ${regenerationAttempt}`
 						}
 					});
 					this._postMessage({
@@ -755,11 +760,13 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 	}
 
 	private async _analyzeFailureAndOfferRegeneration(testOutput: string, originalPrompt: string, regenerationAttempt: number) {
-		// Show failure message
+		// Update testplan panel
 		this._postMessage({
-			command: "chat:error",
+			command: "testplan:updateStep",
 			payload: {
-				message: `❌ Tests failed (attempt ${regenerationAttempt}). Analyzing failure...`
+				stepId: "failure_analysis",
+				status: "in_progress",
+				detail: `Analyzing failure (attempt ${regenerationAttempt})...`
 			}
 		});
 
@@ -778,17 +785,19 @@ Please analyze the errors and provide specific recommendations for fixing the te
 
 Provide a brief analysis of the main issues found.`;
 
-		// Send analysis request to AI
-		this._postMessage({
-			command: "chat:info",
-			payload: {
-				message: "🔍 Analyzing test failure with AI..."
-			}
-		});
-
 		try {
 			// Get AI analysis of the failure
 			const analysisResponse = await this._getAIAnalysis(analysisPrompt);
+
+			// Update testplan panel
+			this._postMessage({
+				command: "testplan:updateStep",
+				payload: {
+					stepId: "failure_analysis",
+					status: "success",
+					detail: "Analysis completed"
+				}
+			});
 
 			// Show the analysis to user
 			this._postMessage({
@@ -799,6 +808,14 @@ Provide a brief analysis of the main issues found.`;
 			});
 
 			// Offer regeneration with improved prompt
+			this._postMessage({
+				command: "testplan:updateStep",
+				payload: {
+					stepId: "regeneration",
+					status: "pending",
+					detail: "Waiting for user decision..."
+				}
+			});
 			this._postMessage({
 				command: "chat:info",
 				payload: {
@@ -900,15 +917,25 @@ The regenerated testbench will address these common issues with proper clock gen
 
 		if (action === "regenerate") {
 			this._postMessage({
-				command: "chat:info",
+				command: "testplan:updateStep",
 				payload: {
-					message: `🔄 Regenerating testbench (attempt ${attempt})...`
+					stepId: "regeneration",
+					status: "in_progress",
+					detail: `Regenerating testbench (attempt ${attempt})...`
 				}
 			});
 
 			// Regenerate the testbench
 			await this._handleChatMessage(prompt);
 		} else {
+			this._postMessage({
+				command: "testplan:updateStep",
+				payload: {
+					stepId: "regeneration",
+					status: "error",
+					detail: "User stopped regeneration"
+				}
+			});
 			this._postMessage({
 				command: "chat:info",
 				payload: {
@@ -979,10 +1006,21 @@ The regenerated testbench will address these common issues with proper clock gen
 		.button-container { margin-top: 8px; }
 		.interactive-button { margin-right: 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-button-border); padding: 6px 12px; border-radius: 4px; cursor: pointer; }
 		.interactive-button:hover { background: var(--vscode-button-hoverBackground); }
+		.testplan-panel { background: var(--vscode-panel-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; margin: 8px 12px; padding: 8px; display: none; font-size: 12px; }
+		.testplan-panel.show { display: block; }
+		.testplan-title { font-weight: 600; margin-bottom: 6px; color: var(--vscode-foreground); }
+		.testplan-step { display: flex; align-items: center; margin-bottom: 3px; padding: 2px 0; }
+		.testplan-step-icon { margin-right: 6px; width: 14px; text-align: center; font-size: 11px; }
+		.testplan-step-text { flex: 1; color: var(--vscode-foreground); }
+		.testplan-step-detail { font-size: 11px; color: var(--vscode-descriptionForeground); margin-left: 20px; margin-top: 1px; }
 	</style>
 </head>
 <body>
 	<div class="header">Chip Assistant</div>
+	<div class="testplan-panel" id="testplanPanel">
+		<div class="testplan-title">📋 Automated Testbench Workflow</div>
+		<div id="testplanSteps"></div>
+	</div>
 	<div class="chat-container" id="chatContainer"></div>
 	<div class="footer">
 		<div class="model-controls">
@@ -1082,6 +1120,48 @@ The regenerated testbench will address these common issues with proper clock gen
 			console.log('Button container added to chat, total buttons:', buttonContainer.children.length);
 		}
 
+		function showTestplan(show) {
+			const panel = document.getElementById('testplanPanel');
+			if (show) {
+				panel.classList.add('show');
+			} else {
+				panel.classList.remove('show');
+			}
+		}
+
+		function updateTestplanStep(stepId, status, detail = '') {
+			const stepsContainer = document.getElementById('testplanSteps');
+			let stepElement = document.getElementById('step-' + stepId);
+
+			if (!stepElement) {
+				stepElement = document.createElement('div');
+				stepElement.className = 'testplan-step';
+				stepElement.id = 'step-' + stepId;
+				stepsContainer.appendChild(stepElement);
+			}
+
+			const icons = {
+				'pending': '⏳',
+				'in_progress': '🔄',
+				'success': '✅',
+				'error': '❌',
+				'warning': '⚠️'
+			};
+
+			const stepTexts = {
+				'testbench_save': 'Testbench saved',
+				'makefile_check': 'Makefile check',
+				'test_execution': 'Test execution',
+				'failure_analysis': 'Failure analysis',
+				'regeneration': 'Testbench regeneration'
+			};
+
+			stepElement.innerHTML =
+				'<div class="testplan-step-icon">' + (icons[status] || '⏳') + '</div>' +
+				'<div class="testplan-step-text">' + (stepTexts[stepId] || stepId) + '</div>' +
+				(detail ? '<div class="testplan-step-detail">' + detail + '</div>' : '');
+		}
+
 		function sendPrompt() {
 			const input = document.getElementById('promptInput');
 			const text = input.value.trim();
@@ -1136,6 +1216,14 @@ The regenerated testbench will address these common issues with proper clock gen
 						advancedToggle.checked = config.useAdvanced;
 					}
 				}
+				break;
+			}
+			case 'testplan:show': {
+				showTestplan(message.payload.show);
+				break;
+			}
+			case 'testplan:updateStep': {
+				updateTestplanStep(message.payload.stepId, message.payload.status, message.payload.detail);
 				break;
 			}
 			case 'chat:setModel': {
