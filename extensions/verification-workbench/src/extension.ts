@@ -1707,7 +1707,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		// Use the same automated workflow as the code lens
-		const prompt = "Generate a clean, production-ready Python Cocotb v2.0+ testbench for a Verilog systolic array module that performs vector-matrix multiplication, with dynamic array port detection, randomized and edge-case tests, proper signed 16-bit/32-bit handling, modern assertions, detailed logging, and no deprecated APIs\n\n" + selectedText;
+		const prompt = "Generate a clean, production-ready Python Cocotb v2.0+ testbench for a Verilog systolic array module that performs vector-matrix multiplication, with dynamic array port detection, randomized and edge-case tests, proper signed 16-bit/32-bit handling, modern assertions, detailed logging, and no deprecated APIs. Do NOT import from cocotb.result or use TestFailure; use Python assertions (assert ...) and modern Cocotb v2.0+ APIs only. Do NOT use cocotb.binary.BinaryValue; instead use plain integers or cocotb.types (e.g., Bit, Logic, BitArray, LogicArray) for values.\n\n" + selectedText;
 		await aiTerminalProvider._handleChatMessage(prompt);
 	});
 
@@ -1742,7 +1742,7 @@ export function activate(context: vscode.ExtensionContext) {
 	);
 	const cocotbCmd = registerSelectionIntent(
 		"chipAssistant.cocotbTestSelection",
-		"Generate a clean, production-ready Python Cocotb v2.0+ testbench for a Verilog systolic array module that performs vector-matrix multiplication, with dynamic array port detection, randomized and edge-case tests, proper signed 16-bit/32-bit handling, modern assertions, detailed logging, and no deprecated APIs",
+		"Generate a clean, production-ready Python Cocotb v2.0+ testbench for a Verilog systolic array module that performs vector-matrix multiplication, with dynamic array port detection, randomized and edge-case tests, proper signed 16-bit/32-bit handling, modern assertions, detailed logging, and no deprecated APIs. Do NOT import from cocotb.result or use TestFailure; use Python assertions (assert ...) and modern Cocotb v2.0+ APIs only. Do NOT use cocotb.binary.BinaryValue; instead use plain integers or cocotb.types (e.g., Bit, Logic, BitArray, LogicArray) for values.",
 	);
 
 	// OpenROAD: Show Results Panel
