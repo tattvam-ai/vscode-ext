@@ -9,7 +9,7 @@
 	"categories": [
 		"Other"
 	],
-	"activationEvents": [],
+  "activationEvents": [],
 	"main": "./out/extension.js",
 	"browser": "./out/extension.js",
 	"extensionDependencies": [
@@ -68,7 +68,8 @@
 			{ "command": "verilator.runSimulation", "title": "Verilator: Run Simulation" },
 			{ "command": "verilator.stopSimulation", "title": "Verilator: Stop Simulation" },
 			{ "command": "verilator.clean", "title": "Verilator: Clean" },
-			{ "command": "verilator.setTestDirectory", "title": "Verilator: Set Test Directory" }
+			{ "command": "verilator.setTestDirectory", "title": "Verilator: Set Test Directory" },
+			{ "command": "chipAssistant.analyzeReports", "title": "Chip Assistant: Analyze Design Reports" }
 		],
 		"viewsContainers": {
 			"activitybar": [
@@ -292,6 +293,7 @@
 		"menus": {
 			"commandPalette": [
 				{ "command": "aiTerminal.show" },
+        { "command": "chipAssistant.analyzeReports" },
 				{ "command": "openroad.setFlowHome" },
 				{ "command": "openroad.configureFlow" },
 				{ "command": "openroad.runFlow" },

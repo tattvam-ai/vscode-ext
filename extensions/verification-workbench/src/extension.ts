@@ -141,6 +141,150 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		panel.onDidDispose(() => relay.dispose());
 	}
 
+	private async _collectFilesRecursively(root: vscode.Uri, maxDepth: number, includeExts: string[], excludeDirs: string[] = []): Promise<vscode.Uri[]> {
+		const results: vscode.Uri[] = [];
+		async function walk(dir: vscode.Uri, depth: number) {
+			if (depth < 0) return;
+			let entries: [string, vscode.FileType][] = [];
+			try { entries = await vscode.workspace.fs.readDirectory(dir); } catch { return; }
+			for (const [name, type] of entries) {
+				if (type === vscode.FileType.Directory) {
+					if (!excludeDirs.includes(name)) {
+						await walk(vscode.Uri.joinPath(dir, name), depth - 1);
+					}
+				} else if (type === vscode.FileType.File) {
+					const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+					if (includeExts.includes(ext)) {
+						results.push(vscode.Uri.joinPath(dir, name));
+					}
+				}
+			}
+		}
+		await walk(root, maxDepth);
+		return results;
+	}
+
+	private async _summarizeFile(uri: vscode.Uri): Promise<{ path: string; size: number; mtime: number; head?: string; tail?: string; errors?: string[] }> {
+		try {
+			const st = await vscode.workspace.fs.stat(uri);
+			const size = st.size;
+			let content: Uint8Array | undefined;
+			// Avoid loading huge files entirely; cap read size
+			if (size <= 256 * 1024) {
+				content = await vscode.workspace.fs.readFile(uri);
+			} else {
+				content = await vscode.workspace.fs.readFile(uri); // VS Code API lacks ranged reads; will slice in memory
+			}
+			const text = Buffer.from(content!).toString('utf8');
+			const lines = text.split(/\r?\n/);
+			const head = lines.slice(0, 80).join('\n');
+			const tail = lines.slice(Math.max(0, lines.length - 120)).join('\n');
+			const errRegex = /(error[^a-z]|error:|failed|fatal|assert|violation|overflow|underflow|warning: timing|setup|hold)/i;
+			const errors = lines.filter(l => errRegex.test(l)).slice(-50);
+			return { path: uri.fsPath, size, mtime: st.mtime, head, tail, errors };
+		} catch {
+			return { path: uri.fsPath, size: 0, mtime: 0 } as any;
+		}
+	}
+
+	public async analyzeDesignReports() {
+		// Show testplan panel and mark analysis start
+		this._postMessage({ command: "testplan:show", payload: { show: true } });
+		this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "in_progress", detail: "Collecting recent reports and logs..." } });
+		const config = vscode.workspace.getConfiguration();
+		let resultsRoot = config.get<string>("openroad.flow.resultsRoot", "");
+		const includeExts = [".rpt", ".log", ".txt", ".json", ".xml"]; // common report/log formats
+		const excludeDirs = ["node_modules", ".git", ".vscode", "__pycache__", "build"];
+
+		let openroadFiles: vscode.Uri[] = [];
+		try {
+			// If OpenROAD results root not configured, mirror OpenROAD sidebar autodetect
+			if (!resultsRoot) {
+				const flowHome = config.get<string>("openroad.flow.flowHome", "");
+				const platform = config.get<string>("openroad.flow.platform", "");
+				const designName = config.get<string>("openroad.flow.designName", "");
+				const flowVariant = config.get<string>("openroad.flow.flowVariant", "base");
+				if (flowHome && platform && designName) {
+					const candidateRoot = path.join(flowHome, "results", platform, designName, flowVariant);
+					// Pick latest directory under candidateRoot, or candidateRoot if it has no subdirectories
+					try {
+						const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(candidateRoot));
+						const dirs = entries.filter(([_, t]) => t === vscode.FileType.Directory);
+						if (dirs.length === 0) {
+							resultsRoot = candidateRoot;
+						} else {
+							const stats = await Promise.all(dirs.map(async ([name]) => {
+								const uri = vscode.Uri.file(path.join(candidateRoot, name));
+								try { const st = await vscode.workspace.fs.stat(uri); return { uri, m: st.mtime }; } catch { return { uri, m: 0 }; }
+							}));
+							stats.sort((a, b) => b.m - a.m);
+							resultsRoot = stats[0]?.uri.fsPath || candidateRoot;
+						}
+					} catch { /* ignore */ }
+				}
+			}
+
+			if (resultsRoot) {
+				// Collect from results run dir and its sibling reports/logs if present
+				const runUri = vscode.Uri.file(resultsRoot);
+				openroadFiles = openroadFiles.concat(await this._collectFilesRecursively(runUri, 7, includeExts, excludeDirs));
+				try {
+					const pathMod = require('path');
+					const reportsUri = vscode.Uri.file(resultsRoot.replace(pathMod.sep + "results" + pathMod.sep, pathMod.sep + "reports" + pathMod.sep));
+					openroadFiles = openroadFiles.concat(await this._collectFilesRecursively(reportsUri, 7, includeExts, excludeDirs));
+				} catch { }
+				try {
+					const pathMod = require('path');
+					const logsUri = vscode.Uri.file(resultsRoot.replace(pathMod.sep + "results" + pathMod.sep, pathMod.sep + "logs" + pathMod.sep));
+					openroadFiles = openroadFiles.concat(await this._collectFilesRecursively(logsUri, 7, includeExts, excludeDirs));
+				} catch { }
+			}
+		} catch { }
+
+		// Sort by mtime desc and limit
+		const byMtimeDesc = async (uris: vscode.Uri[]) => {
+			const stats = await Promise.all(uris.map(async u => {
+				try { const st = await vscode.workspace.fs.stat(u); return { u, m: st.mtime }; } catch { return { u, m: 0 }; }
+			}));
+			return stats.sort((a, b) => b.m - a.m).map(s => s.u);
+		};
+		openroadFiles = (await byMtimeDesc(openroadFiles)).slice(0, 50);
+
+		this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "in_progress", detail: `Summarizing ${openroadFiles.length} files...` } });
+
+		const summaries: Array<{ path: string; size: number; mtime: number; head?: string; tail?: string; errors?: string[] }> = [];
+		for (const file of openroadFiles) {
+			summaries.push(await this._summarizeFile(file));
+		}
+
+		// Build compact prompt in batches to respect context limits
+		const batches: typeof summaries[] = [];
+		const batchSize = 6;
+		for (let i = 0; i < summaries.length; i += batchSize) {
+			batches.push(summaries.slice(i, i + batchSize));
+		}
+		if (batches.length === 0) {
+			this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "warning", detail: "No report/log files found. Configure OpenROAD/Cocotb paths or run the flows." } });
+			return;
+		}
+		for (let i = 0; i < batches.length; i++) {
+			const batch = batches[i];
+			const header = `Analyze design reports (batch ${i + 1}/${batches.length}). Focus on RTL bugs suggested by physical design issues (timing, congestion, DRC/LVS-like violations reported, synthesis warnings) and cocotb test failures. Provide concise insights and suspected RTL root causes.`;
+			const body = batch.map(s => {
+				return [
+					`File: ${s.path}`,
+					`Size: ${s.size} bytes, Modified: ${new Date(s.mtime).toISOString()}`,
+					(s.errors && s.errors.length ? `Errors (recent):\n${s.errors.slice(-10).join('\n')}` : ''),
+					(s.head ? `Head:\n${s.head}` : ''),
+					(s.tail ? `Tail:\n${s.tail}` : ''),
+				].filter(Boolean).join('\n');
+			}).join('\n\n---\n\n');
+			await this._handleChatMessage(`${header}\n\n${body}`);
+		}
+
+		this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "success", detail: `Analyzed ${summaries.length} files in ${batches.length} batch(es)` } });
+	}
+
 	public resolveWebviewView(
 		webviewView: vscode.WebviewView,
 		context: vscode.WebviewViewResolveContext,
@@ -378,8 +522,8 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 				AITerminalProvider._lastAssistantText = assistantText;
 				AITerminalProvider._assistantEmitter.fire(assistantText);
 
-				// Check if this is a testbench generation request and extract Python code
-				if (userText.includes("Generate a clean, production-ready Python Cocotb") || userText.includes("testbench") || userText.includes("cocotb")) {
+				// Only trigger Cocotb testbench generation for the explicit generation intent
+				if (userText.startsWith("Generate a clean, production-ready Python Cocotb")) {
 					await this._extractAndSaveTestbench(assistantText, userText);
 				}
 			}
@@ -1880,6 +2024,9 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		showAITerminal,
 		showAIPanel,
+		vscode.commands.registerCommand("chipAssistant.analyzeReports", async () => {
+			await aiTerminalProvider.analyzeDesignReports();
+		}),
 		setKey,
 		clearKey,
 		toggleAdvancedModel,
