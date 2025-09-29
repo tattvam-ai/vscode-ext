@@ -57,6 +57,90 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 
 	constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext) { }
 
+	public notifyPdFlowCompleted(success: boolean, summary?: { totalSeconds: number; peakMb: number }, failureDetails?: { stage?: string; excerpt: string }) {
+		try {
+			this._postMessage({ command: "testplan:show", payload: { show: true } });
+			const detail = success ? "Physical Design flow completed" : (failureDetails?.stage ? `Failed at ${failureDetails.stage}` : "Physical Design flow failed");
+			this._postMessage({ command: "testplan:updateStep", payload: { stepId: "pd_flow", status: success ? "success" : "error", detail } });
+			if (summary) {
+				const statusLine = success ? "Status: Success" : "Status: Failed";
+				this._postMessage({ command: "chat:assistant", payload: { text: `PD Flow Summary:\n${statusLine}\nTotal Elapsed: ${summary.totalSeconds}s\nPeak Memory: ${summary.peakMb} MB` } });
+			}
+			if (!success && failureDetails?.excerpt) {
+				this._postMessage({ command: "chat:error", payload: { message: `OpenROAD PD flow failed. Key errors:\n\n${failureDetails.excerpt}` } });
+			}
+		} catch { }
+	}
+
+	public openInPanel() {
+		const panel = vscode.window.createWebviewPanel(
+			"aiTerminalPanel",
+			"Chip Assistant",
+			vscode.ViewColumn.Active,
+			{ enableScripts: true, localResourceRoots: [this._extensionUri] }
+		);
+		panel.webview.html = this._getChatHtml();
+		panel.webview.onDidReceiveMessage(
+			async (message) => {
+				switch (message.command) {
+					case "chat:send": {
+						const text: string = message.text ?? "";
+						await this._handleChatMessage(text);
+						break;
+					}
+					case "chat:getConfig": {
+						const config = vscode.workspace.getConfiguration();
+						const useAdvanced = config.get<boolean>("chipAssistant.openai.useAdvancedModel", false);
+						const baseModel = config.get<string>("chipAssistant.openai.model", "o3-mini");
+						const advancedModel = config.get<string>("chipAssistant.openai.advancedModel", "gpt-4o");
+						const model = useAdvanced ? advancedModel : baseModel;
+						const baseUrl = config.get<string>("chipAssistant.openai.baseUrl", "https://api.openai.com/v1");
+						const apiKey = await this._context.secrets.get("chipAssistant.openai.apiKey");
+						panel.webview.postMessage({ command: "chat:config", payload: { hasKey: Boolean(apiKey), model, baseUrl, useAdvanced, baseModel, advancedModel } });
+						break;
+					}
+					case "chat:setModel": {
+						const config = vscode.workspace.getConfiguration();
+						const { model, useAdvanced } = message.payload;
+
+						if (useAdvanced) {
+							await config.update("chipAssistant.openai.advancedModel", model, vscode.ConfigurationTarget.Workspace);
+							await config.update("chipAssistant.openai.useAdvancedModel", true, vscode.ConfigurationTarget.Workspace);
+						} else {
+							await config.update("chipAssistant.openai.model", model, vscode.ConfigurationTarget.Workspace);
+							await config.update("chipAssistant.openai.useAdvancedModel", false, vscode.ConfigurationTarget.Workspace);
+						}
+
+						vscode.window.showInformationMessage(`Chip Assistant: Switched to ${model}`);
+						break;
+					}
+					case "chat:toggleAdvanced": {
+						const config = vscode.workspace.getConfiguration();
+						const { useAdvanced } = message.payload;
+						await config.update("chipAssistant.openai.useAdvancedModel", useAdvanced, vscode.ConfigurationTarget.Workspace);
+
+						const currentModel = config.get<string>(useAdvanced ? "chipAssistant.openai.advancedModel" : "chipAssistant.openai.model", "o3-mini");
+						vscode.window.showInformationMessage(`Chip Assistant: ${useAdvanced ? 'Enabled' : 'Disabled'} Advanced Mode (${currentModel})`);
+						break;
+					}
+					case "chat:regeneration": {
+						const { action } = message.payload;
+						await this._handleRegenerationResponse(action);
+						break;
+					}
+				}
+			},
+			undefined,
+			[]
+		);
+
+		// Simple relay of backend chat messages to this panel
+		const relay = AITerminalProvider.onAssistantMessage((text) => {
+			panel.webview.postMessage({ command: "chat:assistant", payload: { text } });
+		});
+		panel.onDidDispose(() => relay.dispose());
+	}
+
 	public resolveWebviewView(
 		webviewView: vscode.WebviewView,
 		context: vscode.WebviewViewResolveContext,
@@ -176,7 +260,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					command: "chat:typing",
 					payload: {
 						on: true,
-						message: `ℹ️ Using advanced model (${model}) with ${Math.round(timeoutMs / 1000)}s timeout for complex requests...`
+						message: `Using advanced model (${model}) with ${Math.round(timeoutMs / 1000)}s timeout for complex requests...`
 					}
 				});
 			}
@@ -586,7 +670,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		this._postMessage({
 			command: "chat:error",
 			payload: {
-				message: `❌ Tests failed (attempt ${regenerationAttempt}). Would you like me to regenerate the testbench?`
+				message: `Tests failed (attempt ${regenerationAttempt}). Would you like me to regenerate the testbench?`
 			}
 		});
 
@@ -595,7 +679,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		this._postMessage({
 			command: "chat:info",
 			payload: {
-				message: "🔄 Click 'Yes' to regenerate testbench or 'No' to stop",
+				message: "Click 'Yes' to regenerate testbench or 'No' to stop",
 				buttons: [
 					{ id: "regenerate_yes", text: "Yes", action: "regenerate" },
 					{ id: "regenerate_no", text: "No", action: "stop" }
@@ -1022,19 +1106,25 @@ The regenerated testbench will address these common issues with proper clock gen
 		.button-container { margin-top: 8px; }
 		.interactive-button { margin-right: 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-button-border); padding: 6px 12px; border-radius: 4px; cursor: pointer; }
 		.interactive-button:hover { background: var(--vscode-button-hoverBackground); }
-		.testplan-panel { background: var(--vscode-panel-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; margin: 8px 12px; padding: 8px; display: none; font-size: 12px; }
-		.testplan-panel.show { display: block; }
-		.testplan-title { font-weight: 600; margin-bottom: 6px; color: var(--vscode-foreground); }
-		.testplan-step { display: flex; align-items: center; margin-bottom: 3px; padding: 2px 0; }
-		.testplan-step-icon { margin-right: 6px; width: 14px; text-align: center; font-size: 11px; }
-		.testplan-step-text { flex: 1; color: var(--vscode-foreground); }
+			.testplan-panel { background: var(--vscode-panel-background); border: 1px solid var(--vscode-panel-border); border-radius: 6px; margin: 8px 12px; padding: 10px 12px; display: none; font-size: 12px; border-left: 4px solid var(--vscode-textLink-activeForeground); }
+			.testplan-panel.show { display: block; }
+			.testplan-title { font-weight: 700; margin-bottom: 8px; color: var(--vscode-foreground); font-size: 13px; }
+			.testplan-step { display: flex; align-items: center; margin-bottom: 4px; padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: var(--vscode-editorWidget-background); }
+			.testplan-step + .testplan-step { margin-top: 6px; }
+			.testplan-step-text { flex: 1; color: var(--vscode-foreground); font-weight: 600; }
 		.testplan-step-detail { font-size: 11px; color: var(--vscode-descriptionForeground); margin-left: 20px; margin-top: 1px; }
+			.badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 10px; margin-right: 8px; text-transform: uppercase; }
+			.badge.pending { background: var(--vscode-textBlockQuote-background); color: var(--vscode-descriptionForeground); }
+			.badge.in_progress { background: var(--vscode-editorInfo-foreground, #2d7); color: var(--vscode-editor-background); }
+			.badge.success { background: var(--vscode-testing-iconPassed, #0a0); color: #fff; }
+			.badge.error { background: var(--vscode-testing-iconFailed, #a00); color: #fff; }
+			.badge.warning { background: var(--vscode-inputValidation-warningBackground, #a60); color: #fff; }
 	</style>
 </head>
 <body>
 	<div class="header">Chip Assistant</div>
 	<div class="testplan-panel" id="testplanPanel">
-		<div class="testplan-title">📋 Automated Testbench Workflow</div>
+		<div class="testplan-title">Automated Testbench Workflow</div>
 		<div id="testplanSteps"></div>
 	</div>
 	<div class="chat-container" id="chatContainer"></div>
@@ -1156,24 +1246,26 @@ The regenerated testbench will address these common issues with proper clock gen
 				stepsContainer.appendChild(stepElement);
 			}
 
-			const icons = {
-				'pending': '⏳',
-				'in_progress': '🔄',
-				'success': '✅',
-				'error': '❌',
-				'warning': '⚠️'
-			};
-
 			const stepTexts = {
-				'testbench_save': 'Testbench saved',
-				'makefile_check': 'Makefile check',
-				'test_execution': 'Test execution',
-				'failure_analysis': 'Failure analysis',
-				'regeneration': 'Testbench regeneration'
+				'testbench_save': 'Testbench Saved',
+				'makefile_check': 'Makefile Check',
+				'test_execution': 'Test Execution',
+				'failure_analysis': 'Failure Analysis',
+				'regeneration': 'Testbench Regeneration',
+				'pd_flow': 'Physical Design Flow'
 			};
 
+			const statusLabels = {
+				'pending': 'Pending',
+				'in_progress': 'In Progress',
+				'success': 'Success',
+				'error': 'Error',
+				'warning': 'Warning'
+			};
+
+			stepElement.className = 'testplan-step';
 			stepElement.innerHTML =
-				'<div class="testplan-step-icon">' + (icons[status] || '⏳') + '</div>' +
+				'<span class="badge ' + (status || 'pending') + '">' + (statusLabels[status] || 'Pending') + '</span>' +
 				'<div class="testplan-step-text">' + (stepTexts[stepId] || stepId) + '</div>' +
 				(detail ? '<div class="testplan-step-detail">' + detail + '</div>' : '');
 		}
@@ -1435,6 +1527,14 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	// Open Chip Assistant as a movable panel (editor tab)
+	const showAIPanel = vscode.commands.registerCommand(
+		"aiTerminal.openInPanel",
+		() => {
+			aiTerminalProvider.openInPanel();
+		}
+	);
+
 	const setKey = vscode.commands.registerCommand("chipAssistant.setApiKey", async () => {
 		const value = await vscode.window.showInputBox({ prompt: "Enter OpenAI API Key", placeHolder: "sk-...", password: true, ignoreFocusOut: true });
 		if (value) {
@@ -1510,6 +1610,17 @@ export function activate(context: vscode.ExtensionContext) {
 		const runner = OpenroadRunner.getInstance();
 		await runner.runFlow();
 		updateOpenroadStatusItem();
+	});
+
+	// OpenROAD: Flow Completed (internal event)
+	const flowCompleted = vscode.commands.registerCommand("openroad.flowCompleted", async (args?: { success: boolean; log: string }) => {
+		try {
+			const success = Boolean(args?.success);
+			const log = String(args?.log || "");
+			const summary = extractPdSummary(log);
+			const failure = success ? undefined : extractPdFailure(log);
+			aiTerminalProvider.notifyPdFlowCompleted(success, summary || undefined, failure || undefined);
+		} catch { }
 	});
 
 	// OpenROAD: Stop Flow
@@ -1722,9 +1833,9 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
-		// Use the same automated workflow as the code lens
-		const prompt = "Generate a clean, production-ready Python Cocotb v2.0+ testbench for a Verilog systolic array module that performs vector-matrix multiplication, with dynamic array port detection, randomized and edge-case tests, proper signed 16-bit/32-bit handling, modern assertions, detailed logging, and no deprecated APIs. Do NOT import from cocotb.result or use TestFailure; use Python assertions (assert ...) and modern Cocotb v2.0+ APIs only. Do NOT use cocotb.binary.BinaryValue; instead use plain integers or cocotb.types (e.g., Bit, Logic, BitArray, LogicArray) for values.\n\n" + selectedText;
-		await aiTerminalProvider._handleChatMessage(prompt);
+		// Use the same automated workflow as the code lens, and ensure the prompt is shown in chat
+		const intent = "Generate a clean, production-ready Python Cocotb v2.0+ testbench for a Verilog systolic array module that performs vector-matrix multiplication, with dynamic array port detection, randomized and edge-case tests, proper signed 16-bit/32-bit handling, modern assertions, detailed logging, and no deprecated APIs. Do NOT import from cocotb.result or use TestFailure; use Python assertions (assert ...) and modern Cocotb v2.0+ APIs only. Do NOT use cocotb.binary.BinaryValue; instead use plain integers or cocotb.types (e.g., Bit, Logic, BitArray, LogicArray) for values.";
+		await aiTerminalProvider.askWithIntent(intent, selectedText);
 	});
 
 	function registerSelectionIntent(command: string, intentLabel: string) {
@@ -1768,6 +1879,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		showAITerminal,
+		showAIPanel,
 		setKey,
 		clearKey,
 		toggleAdvancedModel,
@@ -1839,6 +1951,69 @@ export function activate(context: vscode.ExtensionContext) {
 		lensProvider.setActiveSelection(editor.document, e.selections[0]);
 	});
 	context.subscriptions.push(lensRegistration, selectionListener);
+}
+
+function extractPdSummary(log: string): { totalSeconds: number; peakMb: number } | null {
+	try {
+		if (!log) return null;
+		let totalSeconds = 0;
+		let peakMb = 0;
+		// Look for a line starting with "Total" followed by seconds and peak MB
+		const totalRegex = /Total\s+([0-9]+)\s+([0-9]+)/i;
+		const m = log.split(/\r?\n/).reverse().find(l => /Total\s+[0-9]+\s+[0-9]+/i.test(l));
+		if (m) {
+			const mm = m.match(totalRegex);
+			if (mm) {
+				totalSeconds = parseInt(mm[1], 10) || 0;
+				peakMb = parseInt(mm[2], 10) || 0;
+				return { totalSeconds, peakMb };
+			}
+		}
+		// Fallback: scan all lines for max of 3rd column
+		const lineRegex = /^\S+\s+([0-9]+)\s+([0-9]+)$/;
+		for (const line of log.split(/\r?\n/)) {
+			const mm2 = line.match(lineRegex);
+			if (mm2) {
+				const sec = parseInt(mm2[1], 10) || 0;
+				const mem = parseInt(mm2[2], 10) || 0;
+				if (line.toLowerCase().startsWith("total")) totalSeconds = sec;
+				if (mem > peakMb) peakMb = mem;
+			}
+		}
+		if (totalSeconds || peakMb) return { totalSeconds, peakMb };
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function extractPdFailure(log: string): { stage?: string; excerpt: string } | null {
+	try {
+		if (!log) return null;
+		const lines = log.split(/\r?\n/);
+		// Collect last ~60 lines for context
+		const tail = lines.slice(Math.max(0, lines.length - 200));
+		// Heuristics: look for typical error patterns
+		const errorRegexes = [
+			/error[:\]]/i,
+			/failed/i,
+			/stack trace/i,
+			/make:\s*\*\*\*/i,
+			/exit code/i,
+		];
+		const errorLines = tail.filter(l => errorRegexes.some(r => r.test(l))).slice(0, 50);
+		// Try to infer stage from a line like "<n_m_stage>"
+		const stageLine = tail.find(l => /^\d+_\d+_/.test(l) && /error|failed/i.test(l));
+		let stage: string | undefined;
+		if (stageLine) {
+			const m = stageLine.match(/^(\d+_\d+_[^\s]+)/);
+			if (m) stage = m[1];
+		}
+		const excerpt = (errorLines.length ? errorLines : tail.slice(-50)).join("\n");
+		return { stage, excerpt };
+	} catch {
+		return null;
+	}
 }
 
 export function deactivate() { }

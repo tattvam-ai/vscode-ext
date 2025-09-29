@@ -10,6 +10,7 @@ export class OpenroadRunner implements vscode.Disposable {
 	private process: ChildProcess | undefined;
 	private outputChannel: vscode.OutputChannel;
 	private disposables: vscode.Disposable[] = [];
+	private outputBuffer: string = "";
 
 	private constructor() {
 		this.outputChannel = vscode.window.createOutputChannel("OpenROAD Flow");
@@ -59,17 +60,21 @@ export class OpenroadRunner implements vscode.Disposable {
 		// Stream output
 		if (this.process.stdout) {
 			this.process.stdout.on("data", (data: Buffer) => {
-				this.outputChannel.append(data.toString());
+				const text = data.toString();
+				this.outputBuffer += text;
+				this.outputChannel.append(text);
 			});
 		}
 
 		if (this.process.stderr) {
 			this.process.stderr.on("data", (data: Buffer) => {
-				this.outputChannel.append(data.toString());
+				const text = data.toString();
+				this.outputBuffer += text;
+				this.outputChannel.append(text);
 			});
 		}
 
-		this.process.on("close", (code: number | null) => {
+		this.process.on("close", async (code: number | null) => {
 			this.outputChannel.appendLine("");
 			if (code === 0) {
 				this.outputChannel.appendLine("✅ OpenROAD flow completed successfully!");
@@ -78,7 +83,11 @@ export class OpenroadRunner implements vscode.Disposable {
 				this.outputChannel.appendLine(`❌ OpenROAD flow failed with exit code: ${code}`);
 				vscode.window.showErrorMessage(`OpenROAD flow failed with exit code: ${code}`);
 			}
+			try {
+				await vscode.commands.executeCommand("openroad.flowCompleted", { success: code === 0, log: this.outputBuffer });
+			} catch { }
 			this.process = undefined;
+			this.outputBuffer = "";
 		});
 
 		this.process.on("error", (error: Error) => {
