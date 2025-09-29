@@ -134,6 +134,22 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		this._postMessage({ command: "chat:userEcho", payload: { text: userText } });
 		this._postMessage({ command: "chat:typing", payload: { on: true } });
 
+		// Quick intent: run OpenROAD PD flow if user asks for it
+		try {
+			const lower = userText.toLowerCase();
+			const wantsPdFlow = /(run|start|launch)\s+(pd\s*flow|physical\s*design|openroad(\s*flow)?)/.test(lower)
+				|| lower.includes("run pd flow")
+				|| lower.includes("run physical design")
+				|| lower.includes("run openroad")
+				|| lower.includes("start pd flow")
+				|| lower.includes("start openroad");
+			if (wantsPdFlow) {
+				await vscode.commands.executeCommand("openroad.runFlow");
+				this._postMessage({ command: "chat:assistant", payload: { text: "Starting OpenROAD PD flow with your configured settings..." } });
+				return;
+			}
+		} catch { }
+
 		let progressInterval: NodeJS.Timeout | undefined;
 		try {
 			const config = vscode.workspace.getConfiguration();
