@@ -54,6 +54,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 
 	// Track pending regeneration requests
 	private _pendingRegeneration?: { prompt: string; attempt: number };
+	private _currentAbort?: AbortController;
 
 	constructor(private readonly _extensionUri: vscode.Uri, private readonly _context: vscode.ExtensionContext) { }
 
@@ -257,32 +258,65 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			summaries.push(await this._summarizeFile(file));
 		}
 
-		// Build compact prompt in batches to respect context limits
-		const batches: typeof summaries[] = [];
-		const batchSize = 6;
-		for (let i = 0; i < summaries.length; i += batchSize) {
-			batches.push(summaries.slice(i, i + batchSize));
-		}
-		if (batches.length === 0) {
-			this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "warning", detail: "No report/log files found. Configure OpenROAD/Cocotb paths or run the flows." } });
-			return;
-		}
-		for (let i = 0; i < batches.length; i++) {
-			const batch = batches[i];
-			const header = `Analyze design reports (batch ${i + 1}/${batches.length}). Focus on RTL bugs suggested by physical design issues (timing, congestion, DRC/LVS-like violations reported, synthesis warnings) and cocotb test failures. Provide concise insights and suspected RTL root causes.`;
-			const body = batch.map(s => {
-				return [
+		// Stage by category for small prompts
+		const byName = (re: RegExp) => summaries.filter(s => re.test(s.path));
+		const timing = byName(/timing|wns|tns|finish\.rpt|report_tns|report_wns/i);
+		const cts = byName(/cts|clock|skew|buf|tree/i);
+		const placeRoute = byName(/grt|global_route|route|drc|antenna|congestion|place|resiz|tapcell|pdn|fill/i);
+		const synth = byName(/yosys|synth|netlist|mem\.json|stat|check/i);
+		const others = summaries.filter(s => ![...timing, ...cts, ...placeRoute, ...synth].includes(s));
+
+		const phases: Array<{ title: string; files: typeof summaries }> = [
+			{ title: "Timing (WNS/TNS/Finish)", files: timing },
+			{ title: "Clock Tree (CTS)", files: cts },
+			{ title: "Placement/Route/DRC", files: placeRoute },
+			{ title: "Synthesis/Netlist", files: synth },
+			{ title: "Other Reports", files: others },
+		];
+
+		// Build design context to guide concrete suggestions
+		const flowHomeCtx = config.get<string>("openroad.flow.flowHome", "");
+		const designConfigCtx = config.get<string>("openroad.flow.designConfig", "");
+		const designNameCtx = config.get<string>("openroad.flow.designName", "");
+		const designSrcDirCtx = (flowHomeCtx && designNameCtx) ? path.join(flowHomeCtx, "designs", "src", designNameCtx) : "";
+
+		let totalAnalyzed = 0;
+		let phasesCount = 0;
+		for (const phase of phases) {
+			if (!phase.files.length) continue;
+			phasesCount++;
+			this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "in_progress", detail: `Analyzing: ${phase.title} (${phase.files.length} files)` } });
+			const batchSize = 3;
+			for (let i = 0; i < phase.files.length; i += batchSize) {
+				const batch = phase.files.slice(i, i + batchSize);
+				const header = [
+					`Analyze ${phase.title} (batch ${(i / batchSize) + 1}/${Math.ceil(phase.files.length / batchSize)}).`,
+					`Goal: propose concrete, minimal code edits to fix issues.`,
+					`Design context:`,
+					`- CONFIG_MK: ${designConfigCtx || '(unknown)'}`,
+					`- DESIGN_SRC_DIR: ${designSrcDirCtx || '(unknown)'}`,
+					`Output format: For each proposed change, include:`,
+					`- File: <absolute path>`,
+					`- Rationale: <why the change fixes the observed issue>`,
+					`- Edit: a concise unified diff (---/+++ with @@ context) OR a full replacement code block when small.`,
+					`Focus on RTL timing fixes (pipelining, retiming, handshakes), synthesis pragmas, and config.mk adjustments (clock period, dont_use, optimization switches).`
+				].join('\n');
+				const body = batch.map(s => [
 					`File: ${s.path}`,
-					`Size: ${s.size} bytes, Modified: ${new Date(s.mtime).toISOString()}`,
-					(s.errors && s.errors.length ? `Errors (recent):\n${s.errors.slice(-10).join('\n')}` : ''),
-					(s.head ? `Head:\n${s.head}` : ''),
+					(s.errors && s.errors.length ? `Errors (recent):\n${s.errors.slice(-12).join('\n')}` : ''),
 					(s.tail ? `Tail:\n${s.tail}` : ''),
-				].filter(Boolean).join('\n');
-			}).join('\n\n---\n\n');
-			await this._handleChatMessage(`${header}\n\n${body}`);
+				].filter(Boolean).join('\n')).join('\n\n---\n\n');
+				await this._handleChatMessage(`${header}\n\n${body}`);
+				totalAnalyzed += batch.length;
+			}
 		}
 
-		this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "success", detail: `Analyzed ${summaries.length} files in ${batches.length} batch(es)` } });
+		if (totalAnalyzed === 0) {
+			this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "warning", detail: "No relevant OpenROAD report/log files found." } });
+			return;
+		}
+
+		this._postMessage({ command: "testplan:updateStep", payload: { stepId: "report_analysis", status: "success", detail: `Analyzed ${totalAnalyzed} files across ${phasesCount} phase(s)` } });
 	}
 
 	public resolveWebviewView(
@@ -306,6 +340,10 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 					case "chat:send": {
 						const text: string = message.text ?? "";
 						await this._handleChatMessage(text);
+						break;
+					}
+					case "chat:cancel": {
+						await this._cancelActiveRequest();
 						break;
 					}
 					case "chat:getConfig": {
@@ -410,23 +448,20 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 			}
 
 			const controller = new AbortController();
+			this._currentAbort = controller;
 			const t = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
 
 			// Simple progress feedback for longer requests
 			console.log("TimeoutMs:", timeoutMs);
-			if (timeoutMs > 10000) { // Show "Still Thinking" for requests > 10 seconds (for testing)
-				console.log("Setting up Still Thinking timeout...");
-				progressInterval = setTimeout(() => {
-					console.log("Sending Still Thinking message...");
-					this._postMessage({
-						command: "chat:typing",
-						payload: {
-							on: true,
-							message: "Still Thinking..."
-						}
-					});
-				}, 10000); // Update after 10 seconds (for testing)
-			}
+			// Show "Still Thinking" for any request that takes longer than 5 seconds
+			console.log("Setting up Still Thinking timeout...");
+			progressInterval = setTimeout(() => {
+				console.log("Sending Still Thinking message...");
+				this._postMessage({
+					command: "chat:assistant",
+					payload: { text: "Still Thinking..." }
+				});
+			}, 5000); // Update after 5 seconds
 
 			let assistantText: string | undefined;
 			try {
@@ -537,6 +572,7 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		finally {
 			this._postMessage({ command: "chat:typing", payload: { on: false } });
 			if (progressInterval) clearTimeout(progressInterval);
+			this._currentAbort = undefined;
 		}
 	}
 
@@ -544,6 +580,16 @@ class AITerminalProvider implements vscode.WebviewViewProvider {
 		if (this._view) {
 			this._view.webview.postMessage(msg);
 		}
+	}
+
+	private async _cancelActiveRequest() {
+		try {
+			if (this._currentAbort) {
+				this._currentAbort.abort();
+			}
+			this._postMessage({ command: "chat:typing", payload: { on: false } });
+			this._postMessage({ command: "chat:info", payload: { message: "Request cancelled." } });
+		} catch { }
 	}
 
 	private async _extractAndSaveTestbench(responseText: string, originalPrompt?: string) {
@@ -1292,6 +1338,7 @@ The regenerated testbench will address these common issues with proper clock gen
 		<div class="footer-row">
 			<textarea id="promptInput" placeholder="Ask about RTL, testbenches, SystemVerilog..."></textarea>
 			<button id="sendBtn">Send</button>
+			<button id="cancelBtn" title="Cancel request">Cancel</button>
 		</div>
 	</div>
 
@@ -1494,6 +1541,9 @@ The regenerated testbench will address these common issues with proper clock gen
 		});
 
 		document.getElementById('sendBtn').addEventListener('click', sendPrompt);
+		document.getElementById('cancelBtn').addEventListener('click', function(){
+			vscode.postMessage({ command: 'chat:cancel' });
+		});
 		document.getElementById('promptInput').addEventListener('keypress', function (e) {
 			if (e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();
@@ -1764,6 +1814,10 @@ export function activate(context: vscode.ExtensionContext) {
 			const summary = extractPdSummary(log);
 			const failure = success ? undefined : extractPdFailure(log);
 			aiTerminalProvider.notifyPdFlowCompleted(success, summary || undefined, failure || undefined);
+			if (success) {
+				// Automatically analyze reports after a successful PD flow
+				await aiTerminalProvider.analyzeDesignReports();
+			}
 		} catch { }
 	});
 
