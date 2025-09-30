@@ -77,8 +77,8 @@ export class OpenroadRunner implements vscode.Disposable {
 		this.process.on("close", async (code: number | null) => {
 			this.outputChannel.appendLine("");
 			if (code === 0) {
-				this.outputChannel.appendLine("✅ OpenROAD flow completed successfully!");
-				vscode.window.showInformationMessage("OpenROAD flow completed successfully!");
+				this.outputChannel.appendLine("✅ OpenROAD flow completed successfully.");
+				vscode.window.showInformationMessage("OpenROAD flow completed successfully.");
 			} else {
 				this.outputChannel.appendLine(`❌ OpenROAD flow failed with exit code: ${code}`);
 				vscode.window.showErrorMessage(`OpenROAD flow failed with exit code: ${code}`);

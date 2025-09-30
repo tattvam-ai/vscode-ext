@@ -153,7 +153,7 @@ export class CocotbRunner implements vscode.Disposable {
 
 		if (discoveredVenv && !process.env.VIRTUAL_ENV) {
 			// Found a virtual environment that's not currently active
-			this.outputChannel.appendLine(`🔄 Activating virtual environment: ${discoveredVenv}`);
+			this.outputChannel.appendLine(`Activating virtual environment: ${discoveredVenv}`);
 
 			// Set up environment variables for the virtual environment
 			env.VIRTUAL_ENV = discoveredVenv;
@@ -197,15 +197,17 @@ export class CocotbRunner implements vscode.Disposable {
 				vscode.window.showErrorMessage(`Cocotb tests failed with exit code: ${code}`);
 			}
 
-			// Auto-open waveform in GTKWave if enabled
+			// Auto-open waveform in GTKWave only on success (exit code 0) and if enabled
 			try {
 				const cfg = vscode.workspace.getConfiguration();
 				const autoOpen = cfg.get<boolean>("cocotb.autoOpenWaveform", true);
-				if (autoOpen) {
+				if (autoOpen && code === 0) {
 					// Defer slightly to allow filesystem to flush waveform files
 					setTimeout(() => {
 						this.viewWaveforms().catch(() => { /* Best-effort */ });
 					}, 800);
+				} else {
+					vscode.window.showErrorMessage("GTK Waveform not opened due to test failure.");
 				}
 			} catch { }
 
@@ -282,7 +284,7 @@ export class CocotbRunner implements vscode.Disposable {
 
 		if (discoveredVenv && !process.env.VIRTUAL_ENV) {
 			// Found a virtual environment that's not currently active
-			this.outputChannel.appendLine(`🔄 Activating virtual environment for clean: ${discoveredVenv}`);
+			this.outputChannel.appendLine(`Activating virtual environment for clean: ${discoveredVenv}`);
 
 			// Set up environment variables for the virtual environment
 			env.VIRTUAL_ENV = discoveredVenv;
@@ -312,7 +314,7 @@ export class CocotbRunner implements vscode.Disposable {
 		this.process.on("close", (code: number | null) => {
 			this.outputChannel.appendLine("");
 			if (code === 0) {
-				this.outputChannel.appendLine("🧹 Cleaned cocotb test artifacts.");
+				this.outputChannel.appendLine("Cleaned cocotb test artifacts.");
 				vscode.window.showInformationMessage("Cocotb: clean completed.");
 
 				// Notify sidebar of cleaned status
@@ -417,7 +419,7 @@ PYTHONPATH = .
 				// Check if Python exists and works
 				const pythonResult = await this.runCommand(pythonCmd, ["--version"]);
 				if (pythonResult.success) {
-					this.outputChannel.appendLine(`  ✅ Python found: ${pythonResult.output.trim()}`);
+					this.outputChannel.appendLine(`  Python found: ${pythonResult.output.trim()}`);
 					results.python = true;
 
 					// Check if this Python has cocotb
@@ -425,7 +427,7 @@ PYTHONPATH = .
 					const cocotbResult = await this.runCommand(pythonCmd, ["-c", "import cocotb; print('cocotb available')"]);
 
 					if (cocotbResult.success) {
-						this.outputChannel.appendLine(`  ✅ Cocotb found: ${cocotbResult.output.trim()}`);
+						this.outputChannel.appendLine(`  Cocotb found: ${cocotbResult.output.trim()}`);
 						results.cocotb = true;
 						workingPython = pythonCmd;
 						break; // Found working Python with cocotb
@@ -441,7 +443,7 @@ PYTHONPATH = .
 		}
 
 		if (workingPython) {
-			this.outputChannel.appendLine(`\n✅ Using Python: ${workingPython}`);
+			this.outputChannel.appendLine(`\n   Using Python: ${workingPython}`);
 		} else {
 			this.outputChannel.appendLine(`\n❌ No working Python with cocotb found`);
 		}
@@ -523,7 +525,7 @@ PYTHONPATH = .
 				const pythonPath = path.join(venvPath, 'bin', 'python');
 
 				if (fs.existsSync(pythonPath)) {
-					this.outputChannel.appendLine(`🔍 Found virtual environment: ${venvPath}`);
+					this.outputChannel.appendLine(`Found virtual environment: ${venvPath}`);
 					return venvPath;
 				}
 			}
@@ -918,7 +920,7 @@ PYTHONPATH = .
 			this.outputChannel.appendLine("");
 
 			if (requiresSudo) {
-				this.outputChannel.appendLine("🔐 Running sudo command in integrated terminal...");
+				this.outputChannel.appendLine("Running sudo command in integrated terminal...");
 				this.outputChannel.appendLine("You will be prompted for your password in the terminal below.");
 				this.outputChannel.appendLine("");
 
@@ -938,7 +940,7 @@ PYTHONPATH = .
 				// Check if it's a sudo-related error
 				if (installResult.error.includes("sudo") || installResult.error.includes("password")) {
 					this.outputChannel.appendLine("");
-					this.outputChannel.appendLine("💡 This might be a sudo/password issue. Try manual installation:");
+					this.outputChannel.appendLine("⚠️ This might be a sudo/password issue. Try manual installation:");
 					this.showManualInstallInstructions();
 				}
 
@@ -1022,7 +1024,7 @@ PYTHONPATH = .
 				} else {
 					this.outputChannel.appendLine(`❌ Failed to install GTKWave via sudo`);
 					this.outputChannel.appendLine("");
-					this.outputChannel.appendLine("💡 This might be a sudo/password issue. Try manual installation:");
+					this.outputChannel.appendLine("⚠️ This might be a sudo/password issue. Try manual installation:");
 					this.showGtkwaveManualInstallInstructions();
 					vscode.window.showErrorMessage(`Failed to install GTKWave. Check the terminal for details.`);
 					return false;
@@ -1268,7 +1270,7 @@ PYTHONPATH = .
 
 	private showManualInstallInstructions(): void {
 		this.outputChannel.appendLine("");
-		this.outputChannel.appendLine("📋 Manual Installation Instructions:");
+		this.outputChannel.appendLine("Manual Installation Instructions:");
 		this.outputChannel.appendLine("");
 		this.outputChannel.appendLine("1. Open a terminal");
 		this.outputChannel.appendLine("2. Run: sudo apt update");

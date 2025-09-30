@@ -137,7 +137,7 @@ export class VerilatorRunner implements vscode.Disposable {
 
 		this.outputChannel.appendLine("");
 		if (prerequisites.verilator && prerequisites.cppCompiler && prerequisites.make && prerequisites.systemc) {
-			this.outputChannel.appendLine("🎉 All prerequisites satisfied!");
+			this.outputChannel.appendLine("All prerequisites satisfied!");
 		} else {
 			this.outputChannel.appendLine("⚠️ Some prerequisites are missing. Please install them to use Verilator.");
 		}
@@ -325,7 +325,7 @@ export class VerilatorRunner implements vscode.Disposable {
 		this.process.stderr?.on("data", (d: Buffer) => this.outputChannel.append(d.toString()));
 		this.process.on("close", (code: number | null) => {
 			this.process = undefined;
-			if (code === 0) { this.outputChannel.appendLine("✅ Verilator compilation completed successfully!"); vscode.window.showInformationMessage("Verilator compilation completed successfully!"); }
+			if (code === 0) { this.outputChannel.appendLine("✅ Verilator compilation completed successfully."); vscode.window.showInformationMessage("Verilator compilation completed successfully!"); }
 			else { this.outputChannel.appendLine(`❌ Verilator compilation failed with exit code: ${code}`); vscode.window.showErrorMessage(`Verilator compilation failed with exit code: ${code}`); }
 		});
 		this.process.on("error", (err: Error) => { this.process = undefined; this.outputChannel.appendLine(`❌ Error running Verilator: ${err.message}`); });
@@ -355,7 +355,7 @@ export class VerilatorRunner implements vscode.Disposable {
 		if (this.process) {
 			this.process.kill();
 			this.process = undefined;
-			this.outputChannel.appendLine("⏹️ Verilator process stopped");
+			this.outputChannel.appendLine("🛑 Verilator process stopped");
 			vscode.window.showInformationMessage("Verilator process stopped");
 		} else {
 			vscode.window.showWarningMessage("No Verilator process is currently running.");
@@ -434,7 +434,7 @@ export class VerilatorRunner implements vscode.Disposable {
 			const cmd = installCommand.join(" ");
 			terminal.sendText(cmd, true);
 			this.outputChannel.appendLine(`✅ Command sent to terminal: ${cmd}`);
-			this.outputChannel.appendLine("🔐 Sudo may be required. When prompted, enter your password in the integrated terminal.");
+			this.outputChannel.appendLine("Sudo may be required. When prompted, enter your password in the integrated terminal.");
 			vscode.window.showInformationMessage("Sudo operation started. When prompted, enter your password in the terminal.");
 			return true;
 		} catch (error: any) {
