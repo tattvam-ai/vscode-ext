@@ -247,6 +247,11 @@
 					"default": true,
 					"description": "Automatically setup cocotb environment if not found"
 				},
+                "cocotb.autoOpenWaveform": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically open the latest GTKWave waveform after cocotb tests finish"
+                },
 				"verilator.testDirectory": {
 					"type": "string",
 					"default": "",

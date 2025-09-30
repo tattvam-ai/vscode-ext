@@ -196,6 +196,19 @@ export class CocotbRunner implements vscode.Disposable {
 				this.outputChannel.appendLine(`❌ Cocotb tests failed with exit code: ${code}`);
 				vscode.window.showErrorMessage(`Cocotb tests failed with exit code: ${code}`);
 			}
+
+			// Auto-open waveform in GTKWave if enabled
+			try {
+				const cfg = vscode.workspace.getConfiguration();
+				const autoOpen = cfg.get<boolean>("cocotb.autoOpenWaveform", true);
+				if (autoOpen) {
+					// Defer slightly to allow filesystem to flush waveform files
+					setTimeout(() => {
+						this.viewWaveforms().catch(() => { /* Best-effort */ });
+					}, 800);
+				}
+			} catch { }
+
 			this.process = undefined;
 		});
 
